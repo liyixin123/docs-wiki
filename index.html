@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Docs Wiki</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <span class="app-title">Docs Wiki</span>
+        <select id="source-select" class="source-select" aria-label="选择文档来源"></select>
+        <button
+          id="add-source-button"
+          type="button"
+          class="add-source-button"
+          title="导入本地文件夹作为新来源"
+        >
+          + 导入文件夹
+        </button>
+        <button
+          id="add-remote-button"
+          type="button"
+          class="add-source-button"
+          title="从 GitHub 仓库导入新来源"
+        >
+          + 远程仓库
+        </button>
+        <button
+          id="remove-source-button"
+          type="button"
+          class="add-source-button remove-source-button"
+          title="移除当前来源"
+        >
+          🗑 移除来源
+        </button>
+        <button
+          id="check-updates-button"
+          type="button"
+          class="add-source-button"
+          title="检查上游文档是否有更新"
+        >
+          🔄 检查更新
+        </button>
+        <button
+          id="history-button"
+          type="button"
+          class="add-source-button"
+          title="查看历史记录"
+        >
+          📜 历史
+        </button>
+        <button
+          id="translate-all-button"
+          type="button"
+          class="add-source-button"
+          title="批量翻译所有待翻译文档"
+        >
+          🌐 翻译全部待翻译
+        </button>
+        <span id="translate-progress" class="translate-progress" hidden></span>
+        <button
+          id="settings-button"
+          type="button"
+          class="add-source-button"
+          title="设置：翻译服务与行为"
+        >
+          ⚙ 设置
+        </button>
+        <input
+          id="search-input"
+          class="search-input"
+          type="search"
+          placeholder="全文搜索…"
+          aria-label="全文搜索"
+        />
+        <div id="lang-toggle" class="lang-toggle" hidden></div>
+      </header>
+      <div class="app-body">
+        <aside id="nav" class="nav"></aside>
+        <main id="content" class="content"></main>
+      </div>
+    </div>
+
+    <dialog id="remote-source-dialog" class="remote-dialog">
+      <form id="remote-source-form" class="remote-form">
+        <h2>从 GitHub 导入</h2>
+        <label>
+          Owner
+          <input id="remote-owner" type="text" required placeholder="earendil-works" />
+        </label>
+        <label>
+          Repo
+          <input id="remote-repo" type="text" required placeholder="pi" />
+        </label>
+        <label>
+          Branch
+          <input id="remote-branch" type="text" required value="main" />
+        </label>
+        <label>
+          文档路径（相对仓库根目录，可留空）
+          <input id="remote-path" type="text" placeholder="packages/coding-agent/docs" />
+        </label>
+        <label>
+          显示名称（可选）
+          <input id="remote-name" type="text" placeholder="默认使用 owner/repo" />
+        </label>
+        <p id="remote-dialog-error" class="remote-dialog-error" hidden></p>
+        <div class="remote-dialog-actions">
+          <button type="button" id="remote-dialog-cancel">取消</button>
+          <button type="submit" id="remote-dialog-submit">导入</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="remote-dialog settings-dialog">
+      <form id="settings-form" class="remote-form">
+        <h2>设置</h2>
+
+        <label>
+          当前使用的翻译服务
+          <select id="settings-active-provider">
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI 兼容</option>
+          </select>
+        </label>
+
+        <fieldset class="provider-fieldset">
+          <legend>Anthropic</legend>
+          <label>
+            Base URL
+            <input id="anthropic-base-url" type="text" placeholder="https://api.anthropic.com" />
+          </label>
+          <label>
+            Model
+            <input id="anthropic-model" type="text" placeholder="claude-sonnet-4-5" />
+          </label>
+          <label>
+            API Key
+            <input id="anthropic-key" type="password" placeholder="例如 $ANTHROPIC_API_KEY" />
+          </label>
+          <label>
+            Max output tokens
+            <input id="anthropic-max-tokens" type="number" min="1" value="8192" />
+          </label>
+          <div class="provider-test-row">
+            <button type="button" id="anthropic-test">测试连接</button>
+            <span id="anthropic-test-result" class="provider-test-result"></span>
+          </div>
+        </fieldset>
+
+        <fieldset class="provider-fieldset">
+          <legend>OpenAI 兼容</legend>
+          <label>
+            Base URL
+            <input id="openai-base-url" type="text" placeholder="https://api.openai.com/v1" />
+          </label>
+          <label>
+            Model
+            <input id="openai-model" type="text" placeholder="gpt-4o" />
+          </label>
+          <label>
+            API Key
+            <input id="openai-key" type="password" placeholder="例如 $OPENAI_API_KEY" />
+          </label>
+          <label>
+            Max output tokens
+            <input id="openai-max-tokens" type="number" min="1" value="8192" />
+          </label>
+          <div class="provider-test-row">
+            <button type="button" id="openai-test">测试连接</button>
+            <span id="openai-test-result" class="provider-test-result"></span>
+          </div>
+        </fieldset>
+
+        <fieldset class="provider-fieldset">
+          <legend>翻译行为</legend>
+          <label class="checkbox-label">
+            <input id="auto-translate-on-change" type="checkbox" />
+            原文更新后自动触发翻译
+          </label>
+          <label class="checkbox-label">
+            <input id="check-on-startup" type="checkbox" />
+            启动时自动检查更新
+          </label>
+          <label>
+            并发翻译请求数
+            <input id="translation-concurrency" type="number" min="1" max="10" value="2" />
+          </label>
+          <label>
+            超长文档分块阈值（字符数）
+            <input id="chunk-threshold" type="number" min="1000" step="1000" value="12000" />
+          </label>
+        </fieldset>
+
+        <fieldset class="provider-fieldset">
+          <legend>备份</legend>
+          <p class="settings-hint">
+            仅备份来源列表、文档状态和翻译设置等元数据（state.json + config.json），不包含文档正文本身。
+            如果设置里的 API Key 是直接填写的明文（而不是 <code>$ENV_VAR</code> 这种表达式），导出的文件会包含它，请妥善保管。
+          </p>
+          <div class="provider-test-row">
+            <button type="button" id="export-backup-button">导出备份…</button>
+            <button type="button" id="import-backup-button">导入备份…</button>
+          </div>
+        </fieldset>
+
+        <p id="settings-error" class="remote-dialog-error" hidden></p>
+        <div class="remote-dialog-actions">
+          <button type="button" id="settings-cancel">取消</button>
+          <button type="submit" id="settings-submit">保存</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
