@@ -1,6 +1,7 @@
 mod backup;
 mod commands;
 mod config;
+mod diff;
 mod docs;
 mod hashing;
 mod local_import;
@@ -8,6 +9,7 @@ mod nav;
 mod provider;
 mod remote_import;
 mod search;
+mod snapshot;
 mod sources;
 mod state;
 mod sync;
@@ -73,6 +75,7 @@ pub fn run() {
             commands::translate_all_pending,
             commands::export_backup,
             commands::import_backup,
+            commands::get_diff,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

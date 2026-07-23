@@ -108,6 +108,15 @@
           显示名称（可选）
           <input id="remote-name" type="text" placeholder="默认使用 owner/repo" />
         </label>
+        <label>
+          翻译目标语言（可选）
+          <input
+            id="remote-translate-to"
+            type="text"
+            placeholder="如 zh；留空则导入为单语言来源"
+            title="填写语言代码后，该来源将支持翻译到此语言，导入后每篇文档会提示翻译"
+          />
+        </label>
         <p id="remote-dialog-error" class="remote-dialog-error" hidden></p>
         <div class="remote-dialog-actions">
           <button type="button" id="remote-dialog-cancel">取消</button>
@@ -214,6 +223,25 @@
           <button type="submit" id="settings-submit">保存</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="diff-dialog" class="remote-dialog diff-dialog">
+      <div class="diff-dialog-content">
+        <div class="diff-header">
+          <div class="diff-header-text">
+            <h2 id="diff-title">变更对比</h2>
+            <p id="diff-meta" class="diff-meta"></p>
+          </div>
+          <div class="diff-toggle" role="group" aria-label="对比视图">
+            <button type="button" id="diff-view-inline" class="diff-toggle-btn active">行内</button>
+            <button type="button" id="diff-view-side" class="diff-toggle-btn">并排</button>
+          </div>
+        </div>
+        <div id="diff-body" class="diff-body"></div>
+        <div class="remote-dialog-actions">
+          <button type="button" id="diff-close">关闭</button>
+        </div>
+      </div>
     </dialog>
   </body>
 </html>

@@ -126,6 +126,7 @@ pub fn ensure_seed_source(dir: &Path, data: &mut AppStateData) -> Result<bool> {
         doc_id: None,
         kind: LogKind::Import,
         detail: format!("Imported bundled seed source '{PI_SOURCE_ID}' ({} docs)", doc_metas.len()),
+        snapshot: None,
     });
 
     Ok(true)

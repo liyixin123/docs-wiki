@@ -105,6 +105,20 @@ pub enum LogKind {
     TranslateError,
 }
 
+/// Points at a saved snapshot of a doc's content from *before* an
+/// `apply_update` (primary-language file) or `translate` (target-language
+/// file) overwrite, so the history UI can diff the old vs. current content.
+/// `file` is the snapshot's file name, relative to
+/// `sources/<id>/.history/<lang>/`. `None` for entries that don't describe an
+/// in-place content change (imports, update checks), and for first-time
+/// apply/translate where there was no prior file to snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotRef {
+    pub lang: String,
+    pub file: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogEntry {
@@ -114,6 +128,8 @@ pub struct LogEntry {
     pub doc_id: Option<String>,
     pub kind: LogKind,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<SnapshotRef>,
 }
 
 /// The full persisted app state (serialized as `state.json`).

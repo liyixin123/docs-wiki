@@ -172,15 +172,45 @@ async fn translate_doc_with_provider(
     let original =
         std::fs::read_to_string(&source_path).with_context(|| format!("reading {source_path:?}"))?;
 
-    let (translated, passes) = translate_document(provider, &original, chunk_threshold).await?;
+    let (translated, passes) = match translate_document(provider, &original, chunk_threshold).await {
+        Ok(result) => result,
+        Err(e) => {
+            // Record the failure in the history log so the user can diagnose
+            // provider errors (bad model, proxy shape, empty response…) from
+            // the history view — the transient UI error alone isn't enough.
+            // The caller persists `data` on both success and failure paths.
+            let now = now_iso();
+            data.log.push(LogEntry {
+                id: format!("translate-fail-{source_id}-{doc_id}-{now}"),
+                ts: now,
+                source_id: source_id.to_string(),
+                doc_id: Some(doc_id.to_string()),
+                kind: LogKind::TranslateError,
+                detail: format!("翻译 '{doc_id}' 失败：{e}"),
+                snapshot: None,
+            });
+            return Err(e);
+        }
+    };
 
+    let now = now_iso();
     let dest_path = doc_content_path(dir, source_id, &target_lang, doc_id);
     if let Some(parent) = dest_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // Snapshot the previous translation (if any) *before* overwriting, so the
+    // history UI can diff what this re-translation changed. A first-time
+    // translation has no prior file, so no snapshot and the entry stays
+    // unclickable.
+    let snapshot = if dest_path.exists() {
+        let old = std::fs::read_to_string(&dest_path)
+            .with_context(|| format!("reading old content at {dest_path:?}"))?;
+        Some(crate::snapshot::save_snapshot(dir, source_id, &target_lang, doc_id, &now, &old)?)
+    } else {
+        None
+    };
     std::fs::write(&dest_path, &translated).with_context(|| format!("writing {dest_path:?}"))?;
 
-    let now = now_iso();
     let doc = data
         .docs
         .iter_mut()
@@ -202,6 +232,7 @@ async fn translate_doc_with_provider(
         } else {
             format!("Translated '{doc_id}' into {target_lang}, but the structural self-check failed — needs manual review")
         },
+        snapshot,
     });
 
     Ok(updated)
@@ -248,6 +279,21 @@ mod tests {
     impl TranslationProvider for UppercaseProvider {
         async fn translate_chunk(&self, markdown: &str) -> Result<String> {
             Ok(markdown.to_uppercase())
+        }
+        async fn test_connection(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A fake provider that always fails — lets us verify that provider
+    /// errors land in the history log instead of vanishing with the
+    /// discarded in-memory snapshot.
+    struct FailingProvider;
+
+    #[async_trait]
+    impl TranslationProvider for FailingProvider {
+        async fn translate_chunk(&self, _markdown: &str) -> Result<String> {
+            bail!("Anthropic 响应里没有找到文本内容")
         }
         async fn test_connection(&self) -> Result<()> {
             Ok(())
@@ -334,6 +380,15 @@ mod tests {
             std::fs::read_to_string(app_dir.path().join("sources").join(&source.id).join("docs/zh/intro.md"))
                 .unwrap();
         assert!(on_disk.contains("HELLO WORLD"));
+
+        // First translation: no prior zh file existed, so nothing to snapshot.
+        let entry = data
+            .log
+            .iter()
+            .rev()
+            .find(|l| matches!(l.kind, LogKind::Translate | LogKind::TranslateError))
+            .unwrap();
+        assert!(entry.snapshot.is_none());
     }
 
     #[tokio::test]
@@ -357,5 +412,99 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("单语言"));
+    }
+
+    #[tokio::test]
+    async fn retranslate_snapshots_the_previous_translation_before_overwriting() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let upstream = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(upstream.path().join("en")).unwrap();
+        std::fs::write(upstream.path().join("en/intro.md"), "# Intro\n\nHello world.").unwrap();
+        std::fs::create_dir_all(upstream.path().join("zh")).unwrap();
+        std::fs::write(upstream.path().join("zh/other.md"), "# 其它").unwrap();
+
+        let mut data = AppStateData::default();
+        let source =
+            import_local_folder(app_dir.path(), &mut data, upstream.path(), Some("Bilingual".to_string())).unwrap();
+
+        // First translation creates zh/intro.md (no prior file -> no snapshot).
+        let _ = translate_doc_with_provider(
+            app_dir.path(),
+            &mut data,
+            &source.id,
+            "intro",
+            &UppercaseProvider,
+            10_000,
+            "fake-provider",
+        )
+        .await
+        .unwrap();
+        // Second translation overwrites it -> snapshots the first (uppercased) version.
+        let _ = translate_doc_with_provider(
+            app_dir.path(),
+            &mut data,
+            &source.id,
+            "intro",
+            &UppercaseProvider,
+            10_000,
+            "fake-provider",
+        )
+        .await
+        .unwrap();
+
+        let entry = data
+            .log
+            .iter()
+            .rev()
+            .find(|l| matches!(l.kind, LogKind::Translate | LogKind::TranslateError))
+            .unwrap();
+        let snap = entry.snapshot.as_ref().expect("re-translation should snapshot the prior translation");
+        assert_eq!(snap.lang, "zh");
+        let old = crate::snapshot::read_snapshot(app_dir.path(), &source.id, snap).unwrap();
+        assert!(old.contains("HELLO WORLD"), "snapshot holds the pre-retranslation content");
+    }
+
+    #[tokio::test]
+    async fn provider_failure_is_recorded_in_the_history_log() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let upstream = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(upstream.path().join("en")).unwrap();
+        std::fs::write(upstream.path().join("en/intro.md"), "# Intro\n\nHello world.").unwrap();
+        std::fs::create_dir_all(upstream.path().join("zh")).unwrap();
+        std::fs::write(upstream.path().join("zh/other.md"), "# 其它").unwrap();
+
+        let mut data = AppStateData::default();
+        let source =
+            import_local_folder(app_dir.path(), &mut data, upstream.path(), Some("Bilingual".to_string())).unwrap();
+
+        let err = translate_doc_with_provider(
+            app_dir.path(),
+            &mut data,
+            &source.id,
+            "intro",
+            &FailingProvider,
+            10_000,
+            "fake-provider",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("没有找到文本内容"));
+
+        // The failure is logged (so the history view can show *why*), the doc
+        // status is untouched, and no half-written translation file exists.
+        let entry = data.log.iter().rev().find(|l| l.kind == LogKind::TranslateError).unwrap();
+        assert_eq!(entry.doc_id.as_deref(), Some("intro"));
+        assert!(entry.detail.contains("没有找到文本内容"));
+        assert!(entry.snapshot.is_none());
+        assert_eq!(
+            data.docs.iter().find(|d| d.id == "intro").unwrap().translation_status,
+            TranslationStatus::NeverTranslated
+        );
+        assert!(!app_dir
+            .path()
+            .join("sources")
+            .join(&source.id)
+            .join("docs/zh/intro.md")
+            .exists());
     }
 }

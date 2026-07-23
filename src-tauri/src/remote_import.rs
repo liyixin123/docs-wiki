@@ -47,13 +47,42 @@ struct TreeEntry {
 /// Import `spec` (owner/repo/branch/path) as a new source. Does the network
 /// fetching itself; does not persist `data` to disk — the caller does that
 /// once the state lock is released.
+///
+/// `translate_to` optionally registers a second, not-yet-translated language
+/// (e.g. `zh`): every doc starts out `NeverTranslated`, which is what lights
+/// up the translation banners/buttons in the UI. Without it the source stays
+/// single-language and translation is disabled for it, as before.
 pub async fn import_remote_source(
     dir: &Path,
     data: &mut AppStateData,
     spec: RemoteSpec,
     display_name: Option<String>,
     lang: String,
+    translate_to: Option<String>,
 ) -> Result<Source> {
+    validate_lang_code(&lang, "源语言")?;
+    let target_lang = translate_to
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty());
+    if let Some(target) = &target_lang {
+        validate_lang_code(target, "翻译目标语言")?;
+        if target == &lang {
+            bail!("翻译目标语言不能与源语言相同（都是 '{lang}'）");
+        }
+    }
+    let languages = match &target_lang {
+        Some(target) => vec![lang.clone(), target.clone()],
+        None => vec![lang.clone()],
+    };
+    // With a translation target registered, no target-language files exist
+    // yet — same situation as a bilingual local import missing its secondary
+    // folder, so reuse that status.
+    let initial_status = if target_lang.is_some() {
+        TranslationStatus::NeverTranslated
+    } else {
+        TranslationStatus::NotApplicable
+    };
+
     let client = Client::new();
     let all_paths = fetch_tree_paths(&client, &spec).await?;
 
@@ -109,7 +138,7 @@ pub async fn import_remote_source(
     for cat in &categories {
         for item in &cat.items {
             let Some(hash) = hashes.get(&item.doc_id) else { continue };
-            doc_metas.push(make_remote_doc_meta(&source_id, &item.doc_id, item.title.clone(), cat.name.clone(), hash.clone(), &now));
+            doc_metas.push(make_remote_doc_meta(&source_id, &item.doc_id, item.title.clone(), cat.name.clone(), hash.clone(), initial_status, &now));
         }
     }
     for id in &md_ids {
@@ -118,7 +147,7 @@ pub async fn import_remote_source(
         }
         let Some(hash) = hashes.get(id) else { continue };
         let title = prettify_id(id.rsplit('/').next().unwrap_or(id));
-        doc_metas.push(make_remote_doc_meta(&source_id, id, title, "未分类".to_string(), hash.clone(), &now));
+        doc_metas.push(make_remote_doc_meta(&source_id, id, title, "未分类".to_string(), hash.clone(), initial_status, &now));
     }
 
     if doc_metas.is_empty() {
@@ -131,7 +160,7 @@ pub async fn import_remote_source(
         id: source_id.clone(),
         name: name.clone(),
         kind: SourceKind::RemoteGit,
-        languages: vec![lang.clone()],
+        languages,
         primary_language: lang,
         remote: Some(spec.clone()),
         local_path: None,
@@ -150,12 +179,21 @@ pub async fn import_remote_source(
         doc_id: None,
         kind: LogKind::Import,
         detail: format!("Imported remote source '{name}' from {}/{} ({doc_count} docs)", spec.owner, spec.repo),
+        snapshot: None,
     });
 
     Ok(source)
 }
 
-fn make_remote_doc_meta(source_id: &str, id: &str, title: String, category: String, hash: String, now: &str) -> DocMeta {
+fn make_remote_doc_meta(
+    source_id: &str,
+    id: &str,
+    title: String,
+    category: String,
+    hash: String,
+    initial_status: TranslationStatus,
+    now: &str,
+) -> DocMeta {
     DocMeta {
         source_id: source_id.to_string(),
         id: id.to_string(),
@@ -166,10 +204,20 @@ fn make_remote_doc_meta(source_id: &str, id: &str, title: String, category: Stri
         // definition it's in sync at import time.
         last_checked_at: Some(now.to_string()),
         last_check_status: CheckStatus::Same,
-        translation_status: TranslationStatus::NotApplicable,
+        translation_status: initial_status,
         translated_at: None,
         translated_by: None,
     }
+}
+
+/// Language codes double as directory names on disk (`docs/<lang>/…`), so
+/// anything but a plain code is rejected at this boundary — a `..` or a
+/// separator in here would otherwise escape the source's doc tree.
+fn validate_lang_code(code: &str, what: &str) -> Result<()> {
+    if code.is_empty() || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        bail!("{what} '{code}' 不合法：只能包含字母、数字、'-' 和 '_'");
+    }
+    Ok(())
 }
 
 fn display_path(path: &str) -> String {
@@ -328,7 +376,7 @@ mod tests {
             path: "packages/coding-agent/docs".to_string(),
         };
 
-        let source = import_remote_source(app_dir.path(), &mut data, spec, Some("Pi (remote)".to_string()), "en".to_string())
+        let source = import_remote_source(app_dir.path(), &mut data, spec, Some("Pi (remote)".to_string()), "en".to_string(), None)
             .await
             .expect("network import against the real GitHub API should succeed");
 
@@ -350,5 +398,75 @@ mod tests {
         assert_eq!(tree.categories.len(), 1);
         assert_eq!(tree.categories[0].name, "未分类");
         assert_eq!(tree.categories[0].items[0].doc_id, "compaction");
+    }
+
+    #[tokio::test]
+    async fn importing_with_a_translation_target_makes_the_source_bilingual() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let mut data = AppStateData::default();
+        // Yazi's docs site: a real public Docusaurus repo, convenient here
+        // because its docs/ folder is small and stable.
+        let spec = RemoteSpec {
+            owner: "yazi-rs".to_string(),
+            repo: "yazi-rs.github.io".to_string(),
+            branch: "main".to_string(),
+            path: "docs".to_string(),
+        };
+
+        let source =
+            import_remote_source(app_dir.path(), &mut data, spec, Some("Yazi".to_string()), "en".to_string(), Some("zh".to_string()))
+                .await
+                .expect("network import against the real GitHub API should succeed");
+
+        // Registering a target language flips the source to bilingual with
+        // every doc awaiting its first translation — which is exactly what
+        // the UI keys its translation banners/buttons off.
+        assert_eq!(source.languages, vec!["en".to_string(), "zh".to_string()]);
+        assert_eq!(source.primary_language, "en");
+        assert!(!data.docs.is_empty());
+        assert!(data.docs.iter().all(|d| d.translation_status == TranslationStatus::NeverTranslated));
+        let en_root = app_dir.path().join("sources").join(&source.id).join("docs/en");
+        assert!(en_root.join("quick-start.md").exists());
+        // No target-language files exist yet — translation creates them.
+        assert!(!app_dir.path().join("sources").join(&source.id).join("docs/zh").exists());
+    }
+
+    #[tokio::test]
+    async fn translation_target_validation_rejects_bad_input_before_any_network_io() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let mut data = AppStateData::default();
+        let spec = RemoteSpec {
+            owner: "irrelevant".to_string(),
+            repo: "irrelevant".to_string(),
+            branch: "main".to_string(),
+            path: String::new(),
+        };
+
+        let same_lang = import_remote_source(
+            app_dir.path(), &mut data, spec.clone(), None, "en".to_string(), Some("en".to_string()),
+        )
+        .await
+        .unwrap_err();
+        assert!(same_lang.to_string().contains("不能与源语言相同"));
+
+        // A hostile code would become a directory name under docs/, so
+        // separators and ".." must be rejected at the boundary.
+        let traversal = import_remote_source(
+            app_dir.path(), &mut data, spec, None, "en".to_string(), Some("../evil".to_string()),
+        )
+        .await
+        .unwrap_err();
+        assert!(traversal.to_string().contains("不合法"));
+    }
+
+    #[test]
+    fn validate_lang_code_accepts_plain_codes_only() {
+        assert!(validate_lang_code("en", "").is_ok());
+        assert!(validate_lang_code("zh-CN", "").is_ok());
+        assert!(validate_lang_code("pt_br", "").is_ok());
+        assert!(validate_lang_code("", "").is_err());
+        assert!(validate_lang_code("a/b", "").is_err());
+        assert!(validate_lang_code("..", "").is_err());
+        assert!(validate_lang_code("zh CN", "").is_err());
     }
 }

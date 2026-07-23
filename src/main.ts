@@ -23,6 +23,8 @@ import {
   type Source,
   type TranslateProgress,
 } from "./api";
+import { initDiffDialog, openDiffDialog } from "./diff-dialog";
+import { initDocLinks, scrollToFragment } from "./doc-links";
 import { renderHistory } from "./history-view";
 import { languageLabel } from "./lang";
 import { renderNav } from "./nav-view";
@@ -63,6 +65,9 @@ let langToggleEl: HTMLElement;
 let navEl: HTMLElement;
 let contentEl: HTMLElement;
 let searchDebounceHandle: number | undefined;
+/** Fragment from an in-content doc link (`other.md#section`), scrolled to
+ * once the target doc has rendered. Null when the navigation had none. */
+let pendingFragment: string | null = null;
 
 window.addEventListener("DOMContentLoaded", () => {
   sourceSelectEl = document.querySelector("#source-select")!;
@@ -89,6 +94,13 @@ window.addEventListener("DOMContentLoaded", () => {
   translateAllButtonEl.addEventListener("click", () => void runTranslateAllPending());
   initRemoteSourceDialog((source) => applyNewSource(source));
   initSettingsDialog(() => refreshSourcesAfterExternalChange());
+  initDiffDialog();
+  initDocLinks(contentEl, {
+    currentDocId: () => state.currentDocId,
+    resolveKnownId: (docId) => resolveDocIdCaseInsensitive(docId),
+    resolveRouteSuffix: (docId) => resolveDocIdBySuffix(docId),
+    navigate: (docId, fragment) => void openLinkedDoc(docId, fragment),
+  });
   void onTranslateProgress(handleTranslateProgress);
 
   void bootstrap();
@@ -271,6 +283,49 @@ async function selectDoc(docId: string): Promise<void> {
   await reloadContent();
 }
 
+/** Navigate to a doc linked from the rendered content of another doc. Falls
+ * back to the source's primary language when the target was never translated
+ * into the current one — otherwise the jump would land on a read error. */
+async function openLinkedDoc(docId: string, fragment: string): Promise<void> {
+  const source = state.currentSource;
+  const meta = state.docMetaById.get(docId);
+  if (!source || !meta) return;
+
+  if (meta.translationStatus === "neverTranslated" && state.currentLang !== source.primaryLanguage) {
+    state.currentLang = source.primaryLanguage;
+    renderLangToggle(source);
+  }
+  pendingFragment = fragment || null;
+  await selectDoc(docId);
+}
+
+/** Doc ids come from filenames, often authored on case-insensitive
+ * filesystems, so `[x](Quickstart.md)` should still find `quickstart`. */
+function resolveDocIdCaseInsensitive(docId: string): string | null {
+  if (state.docMetaById.has(docId)) return docId;
+  const lower = docId.toLowerCase();
+  for (const id of state.docMetaById.keys()) {
+    if (id.toLowerCase() === lower) return id;
+  }
+  return null;
+}
+
+/** Doc-site generators link by site route rather than doc id — e.g. Yazi's
+ * Docusaurus links look like `/docs/configuration/yazi`, which resolves to
+ * the candidate `docs/configuration/yazi` and matches no doc verbatim.
+ * Progressively dropping leading segments lands on the real id
+ * (`configuration/yazi`). Only used as a retry for absolute links, so plain
+ * relative `.md` links keep their exact-match behavior. */
+function resolveDocIdBySuffix(docId: string): string | null {
+  let suffix = docId;
+  while (suffix.includes("/")) {
+    suffix = suffix.slice(suffix.indexOf("/") + 1);
+    const match = resolveDocIdCaseInsensitive(suffix);
+    if (match) return match;
+  }
+  return null;
+}
+
 /** Render the sidebar for the current source/tree, wiring up doc selection,
  * drag-to-reorder (persisted via set_nav_override), and "needs update" badges. */
 function renderCurrentNav(activeDocId: string | null): void {
@@ -317,6 +372,7 @@ async function reloadContent(): Promise<void> {
   const source = state.currentSource;
   const docId = state.currentDocId;
   if (!source || !docId) {
+    pendingFragment = null;
     showPlaceholder(contentEl);
     return;
   }
@@ -325,8 +381,13 @@ async function reloadContent(): Promise<void> {
   try {
     const markdown = await getDocContent(source.id, docId, state.currentLang);
     showDoc(contentEl, markdown, buildDocBanners(source.id, docId));
+    if (pendingFragment) {
+      scrollToFragment(contentEl, pendingFragment);
+    }
   } catch (err) {
     showError(contentEl, String(err));
+  } finally {
+    pendingFragment = null;
   }
 }
 
@@ -376,7 +437,7 @@ async function translateCurrentDoc(sourceId: string, docId: string): Promise<voi
     state.docMetaById.set(docId, updated);
     renderCurrentNav(state.currentDocId);
   } catch (err) {
-    showError(contentEl, String(err));
+    showError(contentEl, String(err), "翻译失败");
     return;
   }
   await reloadContent();
@@ -425,7 +486,7 @@ async function runTranslateAllPending(): Promise<void> {
   try {
     await translateAllPending(source.id);
   } catch (err) {
-    showError(contentEl, String(err));
+    showError(contentEl, String(err), "翻译失败");
   } finally {
     await refreshDocMetas(source.id);
     renderCurrentNav(state.currentDocId);
@@ -445,7 +506,7 @@ async function showHistory(): Promise<void> {
   showLoading(contentEl);
   try {
     const entries = await getHistory(state.currentSource?.id);
-    renderHistory(contentEl, entries);
+    renderHistory(contentEl, entries, (entry) => void openDiffDialog(entry));
   } catch (err) {
     showError(contentEl, String(err));
   }

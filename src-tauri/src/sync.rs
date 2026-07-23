@@ -75,6 +75,7 @@ pub async fn check_updates(data: &mut AppStateData, source_id: &str) -> Result<C
         doc_id: None,
         kind: LogKind::Check,
         detail: format!("Checked {checked} docs: {} changed, {} errored", changed.len(), errored.len()),
+        snapshot: None,
     });
 
     Ok(CheckSummary { checked, changed, errored })
@@ -91,13 +92,30 @@ pub async fn apply_update(dir: &Path, data: &mut AppStateData, source_id: &str, 
         .await
         .with_context(|| format!("拉取 '{doc_id}' 的最新内容失败"))?;
 
+    let now = now_iso();
     let dest_path = doc_content_path(dir, source_id, &source.primary_language, doc_id);
     if let Some(parent) = dest_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // Snapshot the old content (if any) *before* overwriting, so the history
+    // UI can diff what this update changed. A first-time apply has no prior
+    // file, so there is nothing to diff and the log entry stays unclickable.
+    let snapshot = if dest_path.exists() {
+        let old = std::fs::read_to_string(&dest_path)
+            .with_context(|| format!("reading old content at {dest_path:?}"))?;
+        Some(crate::snapshot::save_snapshot(
+            dir,
+            source_id,
+            &source.primary_language,
+            doc_id,
+            &now,
+            &old,
+        )?)
+    } else {
+        None
+    };
     std::fs::write(&dest_path, &content).with_context(|| format!("writing {dest_path:?}"))?;
 
-    let now = now_iso();
     let doc = data
         .docs
         .iter_mut()
@@ -118,6 +136,7 @@ pub async fn apply_update(dir: &Path, data: &mut AppStateData, source_id: &str, 
         doc_id: Some(doc_id.to_string()),
         kind: LogKind::ApplyUpdate,
         detail: format!("Applied upstream update to '{doc_id}'"),
+        snapshot,
     });
 
     Ok(updated)
@@ -270,5 +289,45 @@ mod tests {
         let doc = data.docs.iter().find(|d| d.source_id == source.id).unwrap();
         assert_eq!(doc.last_check_status, CheckStatus::Same);
         assert!(doc.last_checked_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn apply_update_snapshots_the_previous_content_before_overwriting() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let upstream = tempfile::tempdir().unwrap();
+        write(&upstream.path().join("intro.md"), "# Intro\n\nFirst version.");
+
+        let mut data = AppStateData::default();
+        let source = import_local_folder(app_dir.path(), &mut data, upstream.path(), None).unwrap();
+
+        // Change the upstream copy so apply has something new to pull in.
+        write(&upstream.path().join("intro.md"), "# Intro\n\nSecond version.");
+        let _ = apply_update(app_dir.path(), &mut data, &source.id, "intro").await.unwrap();
+
+        let entry = data.log.iter().rev().find(|l| l.kind == LogKind::ApplyUpdate).unwrap();
+        let snap = entry.snapshot.as_ref().expect("apply should snapshot prior content");
+        assert_eq!(snap.lang, source.primary_language);
+        let old = crate::snapshot::read_snapshot(app_dir.path(), &source.id, snap).unwrap();
+        assert!(old.contains("First version."), "snapshot holds the pre-update content");
+    }
+
+    #[tokio::test]
+    async fn first_time_apply_with_no_prior_file_leaves_no_snapshot() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let upstream = tempfile::tempdir().unwrap();
+        write(&upstream.path().join("intro.md"), "# Intro\n\nOnly version.");
+
+        let mut data = AppStateData::default();
+        let source = import_local_folder(app_dir.path(), &mut data, upstream.path(), None).unwrap();
+
+        // Remove the imported primary file so apply writes it for the first time.
+        let primary =
+            crate::sources::doc_content_path(app_dir.path(), &source.id, &source.primary_language, "intro");
+        std::fs::remove_file(&primary).unwrap();
+
+        let _ = apply_update(app_dir.path(), &mut data, &source.id, "intro").await.unwrap();
+        let entry = data.log.iter().rev().find(|l| l.kind == LogKind::ApplyUpdate).unwrap();
+        assert!(entry.snapshot.is_none());
+        assert!(!app_dir.path().join("sources").join(&source.id).join(".history").exists());
     }
 }

@@ -67,6 +67,9 @@ export interface AddRemoteSourceInput {
   path: string;
   name?: string;
   lang?: string;
+  /** Register a second (not-yet-translated) language, e.g. `zh`, enabling
+   * the translation flow for this source. Omit for single-language import. */
+  translateTo?: string;
 }
 
 export function addRemoteSource(input: AddRemoteSourceInput): Promise<Source> {
@@ -117,6 +120,11 @@ export function applyUpdate(sourceId: string, id: string): Promise<DocMeta> {
 
 export type LogKind = "import" | "check" | "applyUpdate" | "translate" | "translateError";
 
+export interface SnapshotRef {
+  lang: string;
+  file: string;
+}
+
 export interface LogEntry {
   id: string;
   ts: string;
@@ -124,10 +132,37 @@ export interface LogEntry {
   docId: string | null;
   kind: LogKind;
   detail: string;
+  /** Present only for apply/translate entries that snapshotted the prior
+   * content, letting the history view show a diff. Null for imports/checks and
+   * for first-time operations that had no prior file to snapshot. */
+  snapshot: SnapshotRef | null;
 }
 
 export function getHistory(sourceId?: string, docId?: string): Promise<LogEntry[]> {
   return invoke("get_history", { sourceId, docId });
+}
+
+export type DiffKind = "add" | "del" | "ctx";
+
+export interface DiffLine {
+  kind: DiffKind;
+  oldNumber: number | null;
+  newNumber: number | null;
+  text: string;
+}
+
+export interface DiffPayload {
+  lines: DiffLine[];
+}
+
+/** Diff a history entry's saved snapshot against the doc's current content. */
+export function getDiff(
+  sourceId: string,
+  lang: string,
+  docId: string,
+  snapshotFile: string,
+): Promise<DiffPayload> {
+  return invoke("get_diff", { sourceId, lang, docId, snapshotFile });
 }
 
 export type ProviderKind = "anthropicMessages" | "openAiCompatible";

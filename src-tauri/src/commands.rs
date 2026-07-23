@@ -8,13 +8,15 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::config::{apply_config_input, load_config, save_config_atomic, ConfigInput, PublicConfig};
+use crate::diff::compute_diff;
 use crate::docs::read_doc_content;
 use crate::local_import::import_local_folder;
 use crate::nav::{apply_order_override, NavTree};
 use crate::provider::build_provider;
 use crate::remote_import::import_remote_source;
 use crate::search::{InMemorySearch, SearchBackend, SearchHit};
-use crate::state::{now_iso, save_state_atomic, AppState, DocMeta, LogEntry, RemoteSpec, Source, TranslationStatus};
+use crate::snapshot;
+use crate::state::{now_iso, save_state_atomic, AppState, DocMeta, LogEntry, RemoteSpec, SnapshotRef, Source, TranslationStatus};
 use crate::sources::{read_manifest, remove_source as remove_source_impl};
 use crate::sync::{apply_update as apply_update_impl, check_updates as check_updates_impl, CheckSummary};
 use crate::translate::translate_doc as translate_doc_impl;
@@ -59,7 +61,32 @@ pub fn get_doc_content(
     id: String,
     lang: String,
 ) -> Result<String, String> {
-    read_doc_content(&state.dir, &source_id, &lang, &id).map_err(|e| e.to_string())
+    match read_doc_content(&state.dir, &source_id, &lang, &id) {
+        Ok(content) => Ok(content),
+        Err(err) => {
+            // An untranslated doc (e.g. a remote source imported with a
+            // translation target language that hasn't run yet, or a
+            // bilingual local import missing its secondary copy) has no file
+            // in the requested language. Serve the primary-language text so
+            // the doc is still readable — the UI shows the "尚未翻译" banner
+            // alongside — instead of a bare error page.
+            let primary = {
+                let data = state.data.lock().map_err(|e| e.to_string())?;
+                data.sources
+                    .iter()
+                    .find(|s| s.id == source_id)
+                    .map(|s| s.primary_language.clone())
+            };
+            if let Some(primary) = primary {
+                if primary != lang {
+                    if let Ok(content) = read_doc_content(&state.dir, &source_id, &primary, &id) {
+                        return Ok(content);
+                    }
+                }
+            }
+            Err(err.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -97,6 +124,7 @@ pub async fn add_remote_source(
     path: String,
     name: Option<String>,
     lang: Option<String>,
+    translate_to: Option<String>,
 ) -> Result<Source, String> {
     let spec = RemoteSpec { owner, repo, branch, path };
     let lang = lang.unwrap_or_else(|| "en".to_string());
@@ -108,7 +136,7 @@ pub async fn add_remote_source(
     // time from the UI's perspective (the "import" button disables itself
     // while a request is in flight).
     let mut data_snapshot = { state.data.lock().map_err(|e| e.to_string())?.clone() };
-    let source = import_remote_source(&state.dir, &mut data_snapshot, spec, name, lang)
+    let source = import_remote_source(&state.dir, &mut data_snapshot, spec, name, lang, translate_to)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -224,15 +252,19 @@ pub async fn translate_doc(state: State<'_, AppState>, source_id: String, id: St
     // translation does network I/O, which can't happen while holding a
     // std::sync::MutexGuard across .await.
     let mut data_snapshot = { state.data.lock().map_err(|e| e.to_string())?.clone() };
-    let doc = translate_doc_impl(&state.dir, &mut data_snapshot, &source_id, &id).await.map_err(|e| e.to_string())?;
+    let doc = translate_doc_impl(&state.dir, &mut data_snapshot, &source_id, &id).await;
 
+    // Persist on BOTH success and failure: a failed translation appends a
+    // TranslateError log entry (see translate.rs) that the history view
+    // relies on for diagnosing provider problems — dropping the snapshot on
+    // error would silently lose it.
     {
         let mut data = state.data.lock().map_err(|e| e.to_string())?;
         *data = data_snapshot;
     }
     let data = state.data.lock().map_err(|e| e.to_string())?;
     save_state_atomic(&state.dir, &data).map_err(|e| e.to_string())?;
-    Ok(doc)
+    doc.map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -270,12 +302,15 @@ pub async fn translate_all_pending(
 
         let success = result.is_ok();
         let error = result.err().map(|e| e.to_string());
-        if success {
+        // Persist on both success and failure: failures append a
+        // TranslateError log entry (see translate.rs) that the history view
+        // relies on for diagnosing provider problems.
+        {
             let mut data = state.data.lock().map_err(|e| e.to_string())?;
             *data = data_snapshot;
-            let data = state.data.lock().map_err(|e| e.to_string())?;
-            save_state_atomic(&state.dir, &data).map_err(|e| e.to_string())?;
         }
+        let data = state.data.lock().map_err(|e| e.to_string())?;
+        save_state_atomic(&state.dir, &data).map_err(|e| e.to_string())?;
 
         // Best-effort: a batch translation shouldn't abort just because the
         // event channel hiccuped — the frontend can still poll list_docs.
@@ -298,4 +333,29 @@ pub fn import_backup(state: State<AppState>, src_path: String) -> Result<(), Str
     let mut data = state.data.lock().map_err(|e| e.to_string())?;
     *data = restored;
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffPayload {
+    pub lines: Vec<crate::diff::DiffLine>,
+}
+
+/// Diff a saved snapshot against the doc's current on-disk content. Used by
+/// the history view: clicking an apply/translate entry with a `snapshot`
+/// opens a diff of "what this operation changed". A missing snapshot (e.g.
+/// after restoring a metadata-only backup on a fresh machine) surfaces as a
+/// user-facing error string rather than a crash.
+#[tauri::command]
+pub fn get_diff(
+    state: State<AppState>,
+    source_id: String,
+    lang: String,
+    doc_id: String,
+    snapshot_file: String,
+) -> Result<DiffPayload, String> {
+    let snap = SnapshotRef { lang, file: snapshot_file };
+    let old = snapshot::read_snapshot(&state.dir, &source_id, &snap).map_err(|e| e.to_string())?;
+    let new = read_doc_content(&state.dir, &source_id, &snap.lang, &doc_id).map_err(|e| e.to_string())?;
+    Ok(DiffPayload { lines: compute_diff(&old, &new) })
 }

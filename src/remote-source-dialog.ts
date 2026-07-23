@@ -15,6 +15,7 @@ export function initRemoteSourceDialog(onImported: (source: Source) => Promise<v
   const branchInput = document.querySelector<HTMLInputElement>("#remote-branch")!;
   const pathInput = document.querySelector<HTMLInputElement>("#remote-path")!;
   const nameInput = document.querySelector<HTMLInputElement>("#remote-name")!;
+  const translateToInput = document.querySelector<HTMLInputElement>("#remote-translate-to")!;
 
   openButton.addEventListener("click", () => {
     errorEl.hidden = true;
@@ -38,6 +39,7 @@ export function initRemoteSourceDialog(onImported: (source: Source) => Promise<v
         branch: branchInput.value.trim() || "main",
         path: pathInput.value.trim(),
         name: nameInput.value.trim() || undefined,
+        translateTo: translateToInput.value.trim() || undefined,
       });
       form.reset();
       branchInput.value = "main";

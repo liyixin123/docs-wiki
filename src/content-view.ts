@@ -1,4 +1,5 @@
 // Renders the main content pane: loading / error / rendered-markdown states.
+import { assignHeadingIds } from "./doc-links";
 import { renderMarkdown } from "./markdown";
 
 export function showLoading(container: HTMLElement): void {
@@ -9,8 +10,8 @@ export function showPlaceholder(container: HTMLElement): void {
   container.innerHTML = `<p class="content-status">从左侧选择一篇文档开始阅读。</p>`;
 }
 
-export function showError(container: HTMLElement, message: string): void {
-  container.innerHTML = `<p class="content-status content-error">加载失败：${escapeHtml(message)}</p>`;
+export function showError(container: HTMLElement, message: string, prefix = "加载失败"): void {
+  container.innerHTML = `<p class="content-status content-error">${prefix}：${escapeHtml(message)}</p>`;
 }
 
 export interface DocBanner {
@@ -38,6 +39,7 @@ export function showDoc(container: HTMLElement, markdown: string, banners: DocBa
   const article = document.createElement("article");
   article.className = "markdown-body";
   article.innerHTML = renderMarkdown(markdown);
+  assignHeadingIds(article); // gives in-page #anchor links something to land on
   container.appendChild(article);
 }
 

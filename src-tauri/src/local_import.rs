@@ -165,6 +165,7 @@ pub fn import_local_folder(
         doc_id: None,
         kind: LogKind::Import,
         detail: format!("Imported local folder '{name}' from {} ({doc_count} docs)", folder.display()),
+        snapshot: None,
     });
 
     Ok(source)
