@@ -27,6 +27,9 @@ import { initDiffDialog, openDiffDialog } from "./diff-dialog";
 import { initDocLinks, scrollToFragment } from "./doc-links";
 import { renderHistory } from "./history-view";
 import { languageLabel } from "./lang";
+import { initAppMenu, type AppMenu } from "./app-menu";
+import { appendPager } from "./pager";
+import { initSidebarCollapse, isTyping } from "./sidebar-collapse";
 import { renderNav } from "./nav-view";
 import { initRemoteSourceDialog } from "./remote-source-dialog";
 import { renderSearchResults } from "./search-view";
@@ -54,46 +57,54 @@ const state: AppState = {
 const SEARCH_DEBOUNCE_MS = 250;
 
 let sourceSelectEl: HTMLSelectElement;
-let addSourceButtonEl: HTMLButtonElement;
-let removeSourceButtonEl: HTMLButtonElement;
-let checkUpdatesButtonEl: HTMLButtonElement;
-let historyButtonEl: HTMLButtonElement;
-let translateAllButtonEl: HTMLButtonElement;
-let translateProgressEl: HTMLElement;
+let appMenu: AppMenu;
 let searchInputEl: HTMLInputElement;
 let langToggleEl: HTMLElement;
 let navEl: HTMLElement;
 let contentEl: HTMLElement;
 let searchDebounceHandle: number | undefined;
+/** True while a batch translation is running — routes progress events to
+ * the menu's inline progress row. */
+let translateRunning = false;
+let initRemoteSourceDialogHandle: { open: () => void };
+let initSettingsDialogHandle: { open: () => void };
 /** Fragment from an in-content doc link (`other.md#section`), scrolled to
  * once the target doc has rendered. Null when the navigation had none. */
 let pendingFragment: string | null = null;
 
 window.addEventListener("DOMContentLoaded", () => {
   sourceSelectEl = document.querySelector("#source-select")!;
-  addSourceButtonEl = document.querySelector("#add-source-button")!;
-  removeSourceButtonEl = document.querySelector("#remove-source-button")!;
-  checkUpdatesButtonEl = document.querySelector("#check-updates-button")!;
-  historyButtonEl = document.querySelector("#history-button")!;
-  translateAllButtonEl = document.querySelector("#translate-all-button")!;
-  translateProgressEl = document.querySelector("#translate-progress")!;
   searchInputEl = document.querySelector("#search-input")!;
   langToggleEl = document.querySelector("#lang-toggle")!;
   navEl = document.querySelector("#nav")!;
   contentEl = document.querySelector("#content")!;
+
+  appMenu = initAppMenu({
+    onImportFolder: () => void addLocalFolderSource(),
+    onImportRemote: () => openRemoteImportDialog(),
+    onRemoveSource: () => void removeCurrentSource(),
+    onCheckUpdates: () => void runCheckUpdates(),
+    onHistory: () => void showHistory(),
+    onTranslateAll: () => void runTranslateAllPending(),
+    onOpenSettings: () => openSettingsDrawer(),
+  });
+  initSidebarCollapse(navEl, document.querySelector<HTMLButtonElement>("#nav-toggle-button")!);
+  document.addEventListener("keydown", (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (isTyping(event.target)) return;
+    const { prev, next } = prevNextDocs();
+    const link = event.key === "ArrowLeft" ? prev : next;
+    if (link) void selectDoc(link.docId);
+  });
 
   sourceSelectEl.addEventListener("change", () => {
     clearSearch();
     void selectSource(sourceSelectEl.value);
   });
   searchInputEl.addEventListener("input", onSearchInput);
-  addSourceButtonEl.addEventListener("click", () => void addLocalFolderSource());
-  removeSourceButtonEl.addEventListener("click", () => void removeCurrentSource());
-  checkUpdatesButtonEl.addEventListener("click", () => void runCheckUpdates());
-  historyButtonEl.addEventListener("click", () => void showHistory());
-  translateAllButtonEl.addEventListener("click", () => void runTranslateAllPending());
-  initRemoteSourceDialog((source) => applyNewSource(source));
-  initSettingsDialog(() => refreshSourcesAfterExternalChange());
+  initRemoteSourceDialogHandle = initRemoteSourceDialog((source) => applyNewSource(source));
+  initSettingsDialogHandle = initSettingsDialog(() => refreshSourcesAfterExternalChange());
   initDiffDialog();
   initDocLinks(contentEl, {
     currentDocId: () => state.currentDocId,
@@ -138,18 +149,39 @@ async function addLocalFolderSource(): Promise<void> {
   const folder = await openFolderDialog({ directory: true, multiple: false, title: "选择要导入的文档文件夹" });
   if (!folder || Array.isArray(folder)) return; // user cancelled
 
-  addSourceButtonEl.disabled = true;
-  const originalLabel = addSourceButtonEl.textContent;
-  addSourceButtonEl.textContent = "导入中…";
+  appMenu.setImportBusy(true);
   try {
     const newSource = await addLocalSource(folder);
     await applyNewSource(newSource);
   } catch (err) {
     showError(contentEl, String(err));
   } finally {
-    addSourceButtonEl.disabled = false;
-    addSourceButtonEl.textContent = originalLabel;
+    appMenu.setImportBusy(false);
   }
+}
+
+/** The remote-import dialog is initialized once; the ⋯ menu just re-opens it. */
+function openRemoteImportDialog(): void {
+  initRemoteSourceDialogHandle.open();
+}
+
+/** Opens the settings drawer from the ⋯ menu. */
+function openSettingsDrawer(): void {
+  initSettingsDialogHandle.open();
+}
+
+/** Pushes doc-metadata-derived menu state: update badge, translate-all
+ * count, and the kebab attention dot. No-op while translation runs. */
+function updateMenuDataState(): void {
+  if (translateRunning) return;
+  const docs = Array.from(state.docMetaById.values());
+  const changedCount = docs.filter((d) => d.lastCheckStatus === "changed").length;
+  const pendingCount = docs.filter(
+    (d) => d.translationStatus === "pending" || d.translationStatus === "neverTranslated",
+  ).length;
+  appMenu.setUpdateBadge(changedCount);
+  appMenu.setTranslateAll(pendingCount);
+  appMenu.setDot(changedCount > 0 || pendingCount > 0);
 }
 
 /** Common "a new source just got imported" flow, shared by local-folder and
@@ -178,8 +210,11 @@ async function refreshSourcesAfterExternalChange(): Promise<void> {
     state.docMetaById = new Map();
     navEl.replaceChildren();
     langToggleEl.hidden = true;
-    checkUpdatesButtonEl.disabled = true;
-    translateAllButtonEl.disabled = true;
+    appMenu.setSourceName(null);
+    appMenu.setCheckUpdatesEnabled(false);
+    appMenu.setTranslateAll(0);
+    appMenu.setUpdateBadge(0);
+    appMenu.setDot(false);
     showError(contentEl, "没有可用的文档来源。");
   }
 }
@@ -224,8 +259,8 @@ async function selectSource(
         ? "zh"
         : source.primaryLanguage;
   renderLangToggle(source);
-  checkUpdatesButtonEl.disabled = !source.remote && !source.localPath;
-  translateAllButtonEl.disabled = source.languages.length < 2;
+  appMenu.setSourceName(source.name);
+  appMenu.setCheckUpdatesEnabled(!!source.remote || !!source.localPath);
 
   showLoading(contentEl);
   try {
@@ -237,6 +272,7 @@ async function selectSource(
 
   await refreshDocMetas(sourceId);
   renderCurrentNav(state.currentDocId);
+  updateMenuDataState();
 
   const firstDocId = state.currentTree.categories.find((c) => c.items.length > 0)
     ?.items[0]?.docId;
@@ -381,6 +417,8 @@ async function reloadContent(): Promise<void> {
   try {
     const markdown = await getDocContent(source.id, docId, state.currentLang);
     showDoc(contentEl, markdown, buildDocBanners(source.id, docId));
+    const { prev, next } = prevNextDocs();
+    appendPager(contentEl, prev, next, (docId) => void selectDoc(docId));
     if (pendingFragment) {
       scrollToFragment(contentEl, pendingFragment);
     }
@@ -389,6 +427,29 @@ async function reloadContent(): Promise<void> {
   } finally {
     pendingFragment = null;
   }
+}
+
+/** Flat doc list in nav-tree order (categories then items), used for the
+ * bottom pager and ←/→ keyboard navigation. */
+function orderedDocs(): Array<{ docId: string; title: string }> {
+  if (!state.currentTree) return [];
+  const docs: Array<{ docId: string; title: string }> = [];
+  for (const category of state.currentTree.categories) {
+    for (const item of category.items) {
+      docs.push({ docId: item.docId, title: item.title });
+    }
+  }
+  return docs;
+}
+
+function prevNextDocs(): { prev: { docId: string; title: string } | null; next: { docId: string; title: string } | null } {
+  const docs = orderedDocs();
+  const index = docs.findIndex((d) => d.docId === state.currentDocId);
+  if (index < 0) return { prev: null, next: null };
+  return {
+    prev: index > 0 ? docs[index - 1] : null,
+    next: index < docs.length - 1 ? docs[index + 1] : null,
+  };
 }
 
 function buildDocBanners(sourceId: string, docId: string): DocBanner[] {
@@ -447,13 +508,12 @@ async function runCheckUpdates(): Promise<void> {
   const source = state.currentSource;
   if (!source) return;
 
-  checkUpdatesButtonEl.disabled = true;
-  const originalLabel = checkUpdatesButtonEl.textContent;
-  checkUpdatesButtonEl.textContent = "检查中…";
+  appMenu.setCheckUpdatesBusy(true);
   try {
     const summary = await checkUpdates(source.id);
     await refreshDocMetas(source.id);
     renderCurrentNav(state.currentDocId);
+    updateMenuDataState();
     await reloadContent();
     window.alert(
       `检查完成：共检查 ${summary.checked} 篇，${summary.changed.length} 篇有更新，${summary.errored.length} 篇检查失败。`,
@@ -461,8 +521,8 @@ async function runCheckUpdates(): Promise<void> {
   } catch (err) {
     showError(contentEl, String(err));
   } finally {
-    checkUpdatesButtonEl.disabled = !source.remote && !source.localPath;
-    checkUpdatesButtonEl.textContent = originalLabel;
+    appMenu.setCheckUpdatesBusy(false);
+    appMenu.setCheckUpdatesEnabled(!!source.remote || !!source.localPath);
   }
 }
 
@@ -480,26 +540,36 @@ async function runTranslateAllPending(): Promise<void> {
   const confirmed = window.confirm(`预计翻译 ${pendingCount} 篇文档，可能需要一些时间并消耗 API 额度，确认继续？`);
   if (!confirmed) return;
 
-  translateAllButtonEl.disabled = true;
-  translateProgressEl.hidden = false;
-  translateProgressEl.textContent = `翻译中… 0/${pendingCount}`;
+  translateRunning = true;
+  appMenu.showTranslateProgress(0, pendingCount);
+  let failed = false;
   try {
     await translateAllPending(source.id);
   } catch (err) {
+    failed = true;
     showError(contentEl, String(err), "翻译失败");
   } finally {
+    translateRunning = false;
     await refreshDocMetas(source.id);
     renderCurrentNav(state.currentDocId);
+    updateMenuDataState();
     await reloadContent();
-    translateAllButtonEl.disabled = source.languages.length < 2;
-    translateProgressEl.hidden = true;
+    if (!failed) showToast("全部翻译完成。");
   }
 }
 
 function handleTranslateProgress(progress: TranslateProgress): void {
-  translateProgressEl.hidden = false;
-  const status = progress.success ? "" : `（失败：${progress.error ?? "未知错误"}）`;
-  translateProgressEl.textContent = `翻译中… ${progress.done}/${progress.total} - ${progress.currentTitle}${status}`;
+  if (!translateRunning) return;
+  appMenu.showTranslateProgress(progress.done, progress.total);
+}
+
+/** Small transient toast, used e.g. when a batch translation finishes. */
+function showToast(message: string): void {
+  const toast = document.createElement("div");
+  toast.className = "app-toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  window.setTimeout(() => toast.remove(), 3500);
 }
 
 async function showHistory(): Promise<void> {

@@ -19,8 +19,9 @@ const DEFAULTS = {
   openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
 };
 
-export function initSettingsDialog(onBackupImported: () => Promise<void>): void {
-  const openButton = document.querySelector<HTMLButtonElement>("#settings-button")!;
+export function initSettingsDialog(
+  onBackupImported: () => Promise<void>,
+): { open: () => void } {
   const dialog = document.querySelector<HTMLDialogElement>("#settings-dialog")!;
   const form = document.querySelector<HTMLFormElement>("#settings-form")!;
   const cancelButton = document.querySelector<HTMLButtonElement>("#settings-cancel")!;
@@ -51,8 +52,17 @@ export function initSettingsDialog(onBackupImported: () => Promise<void>): void 
   const exportBackupButton = document.querySelector<HTMLButtonElement>("#export-backup-button")!;
   const importBackupButton = document.querySelector<HTMLButtonElement>("#import-backup-button")!;
 
-  openButton.addEventListener("click", () => void openDialog());
   cancelButton.addEventListener("click", () => dialog.close());
+
+  // Segmented tabs: providers / behavior / backup.
+  const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("#settings-dialog .settings-tab"));
+  const panes = Array.from(document.querySelectorAll<HTMLElement>("#settings-dialog .settings-pane"));
+  for (const tab of tabButtons) {
+    tab.addEventListener("click", () => {
+      for (const other of tabButtons) other.classList.toggle("active", other === tab);
+      for (const pane of panes) pane.hidden = pane.dataset.pane !== tab.dataset.tab;
+    });
+  }
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     void submitAndClose();
@@ -196,4 +206,6 @@ export function initSettingsDialog(onBackupImported: () => Promise<void>): void 
       errorEl.hidden = false;
     }
   }
+
+  return { open: () => void openDialog() };
 }

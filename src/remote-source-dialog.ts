@@ -1,10 +1,9 @@
-// Wires up the "+ 远程仓库" native <dialog> form: owns its own DOM elements
-// and submit handling, and hands the newly created Source back to the
-// caller once import succeeds.
+// Wires up the "从 GitHub 导入" native <dialog> form: owns its own DOM
+// elements and submit handling, and hands the newly created Source back to
+// the caller once import succeeds. Opened via the ⋯ menu.
 import { addRemoteSource, type Source } from "./api";
 
-export function initRemoteSourceDialog(onImported: (source: Source) => Promise<void>): void {
-  const openButton = document.querySelector<HTMLButtonElement>("#add-remote-button")!;
+export function initRemoteSourceDialog(onImported: (source: Source) => Promise<void>): { open: () => void } {
   const dialog = document.querySelector<HTMLDialogElement>("#remote-source-dialog")!;
   const form = document.querySelector<HTMLFormElement>("#remote-source-form")!;
   const cancelButton = document.querySelector<HTMLButtonElement>("#remote-dialog-cancel")!;
@@ -17,15 +16,16 @@ export function initRemoteSourceDialog(onImported: (source: Source) => Promise<v
   const nameInput = document.querySelector<HTMLInputElement>("#remote-name")!;
   const translateToInput = document.querySelector<HTMLInputElement>("#remote-translate-to")!;
 
-  openButton.addEventListener("click", () => {
-    errorEl.hidden = true;
-    dialog.showModal();
-  });
   cancelButton.addEventListener("click", () => dialog.close());
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     void submit();
   });
+
+  function open(): void {
+    errorEl.hidden = true;
+    dialog.showModal();
+  }
 
   async function submit(): Promise<void> {
     errorEl.hidden = true;
@@ -53,4 +53,6 @@ export function initRemoteSourceDialog(onImported: (source: Source) => Promise<v
       submitButton.textContent = originalLabel;
     }
   }
+
+  return { open };
 }
