@@ -2,12 +2,13 @@
 
 ## 分支与合并流程
 
-- **所有代码改动一律走 PR**:在特性分支上提交(分支名 `feat/<slug>` / `fix/<slug>` / `prototype/<slug>`),push 后开 PR,合并到 `main`,不允许直接 push `main`。
-- PR 标题用 conventional commits 风格(`feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`),正文说明动机与改动要点。
-- PR 描述中链接对应 issue(如 `Closes #N`);合并后 issue 自动关闭。
-- 合并前必须通过:`npx tsc --noEmit`、`npx vite build`、`pnpm test`。
-- 纯文档/约定类改动(如本文件)也走 PR。
-- 例外:`prototype/` 归档分支(throwaway,只存原型,永不合并)可直接 push,不进 `main`。
+- **`main` 是保护分支**：GitHub 上禁用直接 push，只能通过 PR 合并；合并方式用 squash merge，保证 `main` 上每个 PR 只有一个 commit，历史干净。
+- **日常小改动**（typo、样式微调、注释、依赖升级等）：在 `chore/` 分支上累积提交，可随时自由 push，攒够后开 PR 压缩合并。不强制建 issue，PR 描述说清即可。
+- **功能/用户可见 bug**：先建 issue，再开 `feat/<slug>` / `fix/<slug>` 分支，PR 描述链接 issue（如 `Closes #N`），合并后 issue 自动关闭。
+- 特性分支（`feat/` / `fix/` / `chore/` / `prototype/`）可任意 push，不限制。
+- PR 标题用 conventional commits 风格（`feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`），正文说明动机与改动要点。
+- 合并前必须通过：`npx tsc --noEmit`、`npx vite build`、`pnpm test`。
+- 例外：`prototype/` 归档分支（throwaway，只存原型，永不合并）可直接 push，不进 `main`。
 
 ## 测试
 
