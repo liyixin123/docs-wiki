@@ -1,0 +1,445 @@
+<!doctype html>
+<!--
+  PROTOTYPE — THROWAWAY. 不进生产代码。
+  问题:阅读态主界面布局应该长什么样?
+  三个结构完全不同的变体,?variant=A|B|C 切换,底部浮动条 / ←→ 方向键循环。
+  运行:pnpm dev 后访问 http://localhost:5173/prototype/layout-prototype.html
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PROTOTYPE · 布局选择</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      :root {
+        --bg: #fafafa; --panel: #ffffff; --border: #e4e4e7; --text: #18181b;
+        --muted: #71717a; --accent: #2563eb; --accent-soft: #dbeafe;
+        --badge: #f59e0b; --shadow: 0 4px 16px rgba(0,0,0,.12);
+      }
+      html, body { height: 100%; }
+      body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--text); background: var(--bg); }
+
+      /* ===== 共享小组件样式(各变体可覆盖) ===== */
+      .tree-item { display: block; width: 100%; text-align: left; padding: 5px 10px; border: 0; background: none; font-size: 13px; color: var(--text); border-radius: 6px; cursor: pointer; }
+      .tree-item:hover { background: #f0f0f2; }
+      .tree-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+      .tree-item .badge { display: inline-block; margin-left: 6px; font-size: 10px; background: var(--badge); color: #fff; border-radius: 8px; padding: 1px 6px; }
+      .tree-group > .tree-item { font-weight: 600; color: var(--muted); }
+      .tree-children { margin-left: 12px; border-left: 1px solid var(--border); }
+      .content h1 { font-size: 26px; margin: 0 0 12px; }
+      .content h2 { font-size: 19px; margin: 22px 0 8px; }
+      .content p, .content li { font-size: 15px; line-height: 1.75; color: #27272a; margin-bottom: 10px; max-width: 72ch; }
+      .content code { background: #f4f4f5; padding: 2px 5px; border-radius: 4px; font-size: 13px; }
+      .content pre { background: #18181b; color: #e4e4e7; padding: 14px; border-radius: 8px; overflow: auto; margin-bottom: 14px; max-width: 80ch; }
+      .content pre code { background: none; color: inherit; }
+      .pager { display: flex; gap: 10px; }
+      .pager button { border: 1px solid var(--border); background: var(--panel); padding: 8px 18px; border-radius: 17px; cursor: pointer; font-size: 14px; }
+      .pager button:hover { border-color: var(--accent); color: var(--accent); }
+
+      /* ===== 变体 A:⋯ 菜单 + 设置对话框 ===== */
+      .variant-a .menu-wrap { position: relative; }
+      .variant-a .menu {
+        position: absolute; right: 0; top: 40px; width: 260px; background: var(--panel);
+        border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+        padding: 6px; z-index: 50; font-size: 13px;
+      }
+      .variant-a .menu-section { padding: 6px 10px 2px; font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+      .variant-a .menu-item { display: flex; width: 100%; align-items: center; gap: 10px; text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--text); }
+      .variant-a .menu-item:hover { background: #f0f0f2; }
+      .variant-a .menu-item:disabled { color: #a1a1aa; cursor: default; }
+      .variant-a .menu-item:disabled:hover { background: none; }
+      .variant-a .menu-item .icon { width: 18px; text-align: center; }
+      .variant-a .menu-item .hint { margin-left: auto; font-size: 11px; color: var(--muted); }
+      .variant-a .menu-item .count-badge { margin-left: auto; font-size: 11px; background: var(--accent-soft); color: var(--accent); border-radius: 10px; padding: 1px 7px; }
+      .variant-a .menu-item .count-badge.warn { background: #fef3c7; color: #b45309; }
+      .variant-a .menu-divider { height: 1px; background: var(--border); margin: 5px 8px; }
+      .variant-a .kebab.has-dot::after { content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--badge); }
+
+      /* 翻译进度行(翻译进行中时替换「翻译全部」项) */
+      .variant-a .menu-progress { display: flex; align-items: center; gap: 10px; padding: 8px 10px; }
+      .variant-a .menu-progress .bar { flex: 1; height: 5px; background: #e4e4e7; border-radius: 3px; overflow: hidden; }
+      .variant-a .menu-progress .bar i { display: block; height: 100%; width: 45%; background: var(--accent); border-radius: 3px; transition: width .3s; }
+      .variant-a .menu-progress span { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+      /* 设置:右侧滑入窄抽屉,顶部横向分段标签 */
+      .variant-a dialog.settings {
+        border: 0; box-shadow: var(--shadow); padding: 0; width: 360px; max-width: 92vw;
+        height: 100vh; max-height: 100vh; margin: 0 0 0 auto; border-radius: 14px 0 0 14px;
+      }
+      .variant-a dialog.settings::backdrop { background: rgba(24,24,27,.25); }
+      .variant-a .settings-layout { display: flex; flex-direction: column; height: 100%; }
+      .variant-a .settings-tabs { display: flex; gap: 4px; padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+      .variant-a .settings-tabs h3 { display: none; }
+      .variant-a .tab-btn { flex: 1; border: 1px solid var(--border); background: var(--panel); text-align: center; padding: 6px 0; border-radius: 8px; font-size: 12px; cursor: pointer; color: var(--muted); }
+      .variant-a .tab-btn.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-color: var(--accent-soft); }
+      .variant-a .settings-pane { padding: 16px; overflow-y: auto; flex: 1; }
+      .variant-a .settings-pane h4 { font-size: 14px; margin-bottom: 12px; }
+      .variant-a .field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+      .variant-a .field input, .variant-a .field select { display: block; width: 100%; margin-top: 4px; height: 32px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; font-size: 13px; }
+      .variant-a .provider-block { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+      .variant-a .provider-block legend, .variant-a .provider-block .legend { font-size: 12px; font-weight: 600; color: var(--muted); padding: 0 4px; }
+      .variant-a .check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-bottom: 10px; }
+      .variant-a .settings-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+      .variant-a .settings-actions .primary { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: 13px; }
+      .variant-a .settings-actions .ghost { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 13px; }
+
+      /* ===== 变体 A:经典双栏,极简顶栏 ===== */
+      .variant-a .app-header { display: flex; align-items: center; gap: 16px; height: 52px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border); position: relative; }
+      .variant-a .app-title { font-weight: 700; font-size: 15px; white-space: nowrap; }
+      .variant-a .search-input { position: absolute; left: 50%; transform: translateX(-50%); width: 560px; max-width: min(560px, calc(100vw - 480px)); height: 34px; border: 1px solid var(--border); border-radius: 17px; padding: 0 14px; background: var(--bg); font-size: 14px; }
+      .variant-a .header-spacer { flex: 1; }
+      .variant-a .right-cluster { display: flex; align-items: center; gap: 8px; }
+      .variant-a .source-select { height: 32px; border: 1px solid var(--border); border-radius: 8px; padding: 0 8px; font-size: 13px; background: var(--panel); max-width: 220px; }
+      .variant-a .kebab { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; font-size: 15px; }
+      .variant-a .lang-pill { border: 1px solid var(--border); background: var(--panel); border-radius: 16px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+      .variant-a .app-body { display: flex; height: calc(100vh - 52px); }
+      .variant-a .rail { width: 40px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; align-items: center; padding-top: 8px; gap: 4px; }
+      .variant-a .rail button { width: 30px; height: 30px; border-radius: 8px; border: 0; background: none; font-size: 14px; cursor: pointer; color: var(--muted); }
+      .variant-a .rail button:hover { background: #f0f0f2; color: var(--text); }
+      .variant-a .sidebar { width: 260px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--panel); overflow-y: auto; padding: 10px; }
+      .variant-a .sidebar.collapsed { display: none; }
+      .variant-a .collapse-handle { display: none; }
+      .variant-a .content { flex: 1; overflow-y: auto; padding: 36px 48px 80px; }
+      .variant-a .content-footer { margin-top: 48px; justify-content: space-between; max-width: 72ch; }
+
+      /* ===== 变体 B:沉浸无顶栏,Cmd+K 搜索 + 抽屉侧栏 + 悬浮翻页 ===== */
+      .variant-b .search-fab { position: fixed; top: 14px; right: 84px; height: 34px; width: 220px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,.9); backdrop-filter: blur(6px); color: var(--muted); font-size: 13px; text-align: left; padding: 0 12px; cursor: pointer; box-shadow: var(--shadow); }
+      .variant-b .kefab { position: fixed; top: 14px; right: 40px; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,.9); cursor: pointer; }
+      .variant-b .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 280px; background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 14px 10px; transform: translateX(0); transition: transform .2s ease; z-index: 10; box-shadow: var(--shadow); }
+      .variant-b .sidebar.collapsed { transform: translateX(-100%); }
+      .variant-b .sidebar-open-btn { position: fixed; left: 14px; top: 14px; z-index: 9; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: rgba(255,255,255,.9); cursor: pointer; display: none; }
+      .variant-b .sidebar.collapsed ~ .sidebar-open-btn, .variant-b body:has(.sidebar.collapsed) .sidebar-open-btn { display: block; }
+      .variant-b .content { max-width: 780px; margin: 0 auto; padding: 56px 24px 120px; }
+      .variant-b .edge-pager { position: fixed; right: 18px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; z-index: 5; }
+      .variant-b .edge-pager button { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border); background: rgba(255,255,255,.92); box-shadow: var(--shadow); cursor: pointer; font-size: 16px; }
+      .variant-b .doc-title-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+      .variant-b .repo-chip { font-size: 12px; color: var(--muted); background: #f4f4f5; padding: 3px 10px; border-radius: 12px; }
+
+      /* ===== 变体 C:顶部信息条 + 图标栏侧边 ===== */
+      .variant-c .app-header { display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 14px; background: #18181b; color: #e4e4e7; }
+      .variant-c .app-title { font-size: 14px; font-weight: 700; }
+      .variant-c .search-input { width: 340px; height: 30px; border-radius: 15px; border: 1px solid #3f3f46; background: #27272a; color: #e4e4e7; padding: 0 12px; font-size: 13px; }
+      .variant-c .right-cluster { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+      .variant-c .source-chip { display: flex; align-items: center; gap: 6px; font-size: 12px; background: #27272a; border: 1px solid #3f3f46; border-radius: 14px; padding: 5px 10px; cursor: pointer; }
+      .variant-c .app-body { display: flex; height: calc(100vh - 48px); }
+      .variant-c .rail { width: 44px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 10px; }
+      .variant-c .rail button { width: 32px; height: 32px; border-radius: 8px; border: 0; background: none; font-size: 16px; cursor: pointer; color: var(--muted); }
+      .variant-c .rail button:hover { background: #f0f0f2; color: var(--text); }
+      .variant-c .sidebar { width: 240px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--panel); overflow-y: auto; padding: 10px; }
+      .variant-c .sidebar.collapsed { display: none; }
+      .variant-c .content { flex: 1; overflow-y: auto; padding: 32px 44px 80px; }
+      .variant-c .content-toolbar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 18px; }
+      .variant-c .content-toolbar button { font-size: 12px; border: 1px solid var(--border); background: var(--panel); border-radius: 14px; padding: 4px 10px; cursor: pointer; color: var(--muted); }
+      .variant-c .content-footer { margin-top: 44px; justify-content: center; gap: 40px; }
+
+      /* ===== 浮动切换条(不属于任何变体) ===== */
+      .proto-switcher { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; background: #18181b; color: #fff; border-radius: 999px; padding: 8px 14px; box-shadow: var(--shadow); z-index: 999; font-size: 13px; }
+      .proto-switcher button { border: 0; background: #3f3f46; color: #fff; width: 26px; height: 26px; border-radius: 50%; cursor: pointer; }
+      .proto-switcher button:hover { background: var(--accent); }
+      .proto-switcher .label b { color: #93c5fd; }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <!-- ===================== 变体 A ===================== -->
+    <div class="variant-a hidden" data-variant="A">
+      <header class="app-header">
+        <span class="app-title">Docs Wiki</span>
+        <span class="header-spacer"></span>
+        <input class="search-input" type="search" placeholder="全文搜索…" />
+        <span class="header-spacer"></span>
+        <div class="right-cluster">
+          <span class="lang-pill">中 / EN</span>
+          <select class="source-select"><option>earendil-works / pi</option><option>rust-lang / book</option></select>
+          <div class="menu-wrap">
+            <button class="kebab has-dot" id="kebab-a" title="来源管理与全局动作">⋯</button>
+            <div class="menu hidden" id="menu-a">
+              <div class="menu-section">来源 · EARNEDIL-WORKS / PI</div>
+              <button class="menu-item" id="mi-import-folder"><span class="icon">📁</span>导入本地文件夹</button>
+              <button class="menu-item" id="mi-import-remote"><span class="icon">🐙</span>从 GitHub 导入…</button>
+              <button class="menu-item" id="mi-remove-source"><span class="icon">🗑</span>移除当前来源</button>
+              <div class="menu-divider"></div>
+              <div class="menu-section">当前来源</div>
+              <button class="menu-item" id="mi-check-updates"><span class="icon">🔄</span>检查更新<span class="count-badge warn">2 篇待更新</span></button>
+              <button class="menu-item" id="mi-history"><span class="icon">📜</span>历史记录</button>
+              <button class="menu-item" id="mi-translate-all" disabled><span class="icon">🌐</span>翻译全部待翻译<span class="hint">无待翻译</span></button>
+              <div class="menu-divider"></div>
+              <button class="menu-item" id="mi-settings"><span class="icon">⚙</span>设置<span class="hint">⌘,</span></button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <div class="app-body">
+        <nav class="rail">
+          <button id="rail-toggle-a" title="展开/收起目录 (⌘B)">☰</button>
+        </nav>
+        <aside class="sidebar" id="sidebar-a">
+          <div class="tree-group"><button class="tree-item">入门</button></div>
+          <div class="tree-children">
+            <button class="tree-item active">安装与配置</button>
+            <button class="tree-item">快速开始 <span class="badge">待更新</span></button>
+          </div>
+          <div class="tree-group"><button class="tree-item">核心概念</button></div>
+          <div class="tree-children">
+            <button class="tree-item">会话与上下文</button>
+            <button class="tree-item">工具调用</button>
+          </div>
+          <div class="tree-group"><button class="tree-item">进阶</button></div>
+          <div class="tree-children">
+            <button class="tree-item">扩展开发</button>
+            <button class="tree-item">技能系统</button>
+          </div>
+        </aside>
+        <main class="content">
+          <h1>安装与配置</h1>
+          <p>顶栏只保留:标题(左)· 搜索框 · 语言切换 · 来源下拉 + ⋯ 菜单(右上)。</p>
+          <h2>⋯ 菜单内容(分级)</h2>
+          <ul>
+            <li><b>来源</b>:导入文件夹 / 远程仓库 / 移除当前来源</li>
+            <li><b>动作</b>:检查更新 / 历史 / 翻译全部待翻译</li>
+            <li><b>全局</b>:设置(翻译服务 / 行为 / 备份)</li>
+          </ul>
+          <h2>交互</h2>
+          <p>大纲通过边缘圆把手或 <code>⌘B</code> 收起,状态记忆到 localStorage;收起后正文占满全宽。翻页按钮固定在正文底部:上一篇 / 下一篇。</p>
+          <pre><code># 收起大纲
+Cmd/Ctrl + B</code></pre>
+          <div class="pager content-footer">
+            <button>← 上一篇:快速开始</button>
+            <button>下一篇:会话与上下文 →</button>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- 变体 A 的设置对话框 mock -->
+    <dialog class="settings" id="settings-a">
+      <div class="settings-layout">
+        <nav class="settings-tabs">
+          <h3>设置</h3>
+          <button class="tab-btn active" data-tab="providers">翻译服务</button>
+          <button class="tab-btn" data-tab="behavior">翻译行为</button>
+          <button class="tab-btn" data-tab="backup">备份</button>
+        </nav>
+        <div>
+          <div class="settings-pane" data-pane="providers">
+            <h4>翻译服务</h4>
+            <div class="field">当前使用
+              <select><option>Anthropic</option><option>OpenAI 兼容</option></select>
+            </div>
+            <div class="provider-block">
+              <div class="legend">Anthropic</div>
+              <label class="field">Base URL<input value="https://api.anthropic.com"></label>
+              <label class="field">Model<input value="claude-sonnet-4-5"></label>
+              <label class="field">API Key<input type="password" placeholder="已配置(留空则不修改)"></label>
+              <label class="field">Max output tokens<input type="number" value="8192"></label>
+            </div>
+            <div class="provider-block">
+              <div class="legend">OpenAI 兼容</div>
+              <label class="field">Base URL<input placeholder="https://api.openai.com/v1"></label>
+              <label class="field">Model<input placeholder="gpt-4o"></label>
+              <label class="field">API Key<input type="password" placeholder="例如 $OPENAI_API_KEY"></label>
+            </div>
+          </div>
+          <div class="settings-pane hidden" data-pane="behavior">
+            <h4>翻译行为</h4>
+            <label class="check-row"><input type="checkbox" checked>原文更新后自动触发翻译</label>
+            <label class="check-row"><input type="checkbox" checked>启动时自动检查更新</label>
+            <label class="field">并发翻译请求数<input type="number" value="2" min="1" max="10"></label>
+            <label class="field">超长文档分块阈值(字符数)<input type="number" value="12000" step="1000"></label>
+          </div>
+          <div class="settings-pane hidden" data-pane="backup">
+            <h4>备份</h4>
+            <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">仅备份来源列表、文档状态和翻译设置等元数据,不包含文档正文。</p>
+            <button class="ghost" style="border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;">导出备份…</button>
+            <button class="ghost" style="border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:pointer;">导入备份…</button>
+          </div>
+          <div class="settings-actions">
+            <button class="ghost" onclick="document.getElementById('settings-a').close()">取消</button>
+            <button class="primary" onclick="document.getElementById('settings-a').close()">保存</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ===================== 变体 B ===================== -->
+    <div class="variant-b hidden" data-variant="B">
+      <button class="search-fab" title="⌘K">🔍 全文搜索…</button>
+      <button class="kebab" title="来源与设置">⋯</button>
+      <aside class="sidebar" id="sidebar-b">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <b style="font-size:13px;">earendil-works / pi</b>
+          <button class="collapse-handle" style="position:static;" onclick="toggleB()" title="收起">◀</button>
+        </div>
+        <div class="tree-group"><button class="tree-item">入门</button></div>
+        <div class="tree-children">
+          <button class="tree-item active">安装与配置</button>
+          <button class="tree-item">快速开始 <span class="badge">待更新</span></button>
+        </div>
+        <div class="tree-group"><button class="tree-item">核心概念</button></div>
+        <div class="tree-children">
+          <button class="tree-item">会话与上下文</button>
+          <button class="tree-item">工具调用</button>
+        </div>
+      </aside>
+      <button class="sidebar-open-btn" onclick="toggleB()" title="展开大纲">☰</button>
+      <main class="content">
+        <div class="doc-title-row">
+          <h1>安装与配置</h1>
+          <span class="repo-chip">earendil-works / pi</span>
+        </div>
+        <p>完全无顶栏:搜索退化为右上角搜索入口(<code>⌘K</code> 唤起浮层);来源、设置全部收进右上 ⋯。侧栏变成悬浮抽屉,收起后正文如书页般居中沉浸。</p>
+        <h2>翻页</h2>
+        <p>屏幕右缘中部悬浮一对圆形箭头,鼠标靠近才完全显现;也支持 <code>←/→</code>。</p>
+        <h2>适合</h2>
+        <p>长文档连续阅读、对干扰最敏感的场景。代价:全局动作的可达性最低,新用户需要学习 ⌘K。</p>
+        <pre><code>$ pi --version</code></pre>
+        <p>正文宽度限制在 780px,行宽与纸书接近,注意力最集中。</p>
+      </main>
+      <div class="edge-pager">
+        <button title="上一篇">↑</button>
+        <button title="下一篇">↓</button>
+      </div>
+    </div>
+
+    <!-- ===================== 变体 C ===================== -->
+    <div class="variant-c hidden" data-variant="C">
+      <header class="app-header">
+        <span class="app-title">Docs Wiki</span>
+        <input class="search-input" type="search" placeholder="全文搜索…" />
+        <div class="right-cluster">
+          <span style="font-size:12px;color:#a1a1aa;">中/EN</span>
+          <span class="source-chip">📦 earendil-works / pi ▾</span>
+          <button class="kebab" style="background:none;border:1px solid #3f3f46;border-radius:8px;width:30px;height:28px;color:#e4e4e7;cursor:pointer;">⋯</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <nav class="rail">
+          <button title="展开/收起目录" onclick="toggleC()">☰</button>
+          <button title="导入来源">＋</button>
+          <button title="检查更新">↻</button>
+          <button title="设置">⚙</button>
+        </nav>
+        <aside class="sidebar" id="sidebar-c">
+          <div class="tree-group"><button class="tree-item">入门</button></div>
+          <div class="tree-children">
+            <button class="tree-item active">安装与配置</button>
+            <button class="tree-item">快速开始 <span class="badge">待更新</span></button>
+          </div>
+          <div class="tree-group"><button class="tree-item">核心概念</button></div>
+          <div class="tree-children">
+            <button class="tree-item">会话与上下文</button>
+            <button class="tree-item">工具调用</button>
+          </div>
+        </aside>
+        <main class="content">
+          <div class="content-toolbar">
+            <button>中 / EN</button>
+            <button>🌐 翻译本篇</button>
+            <button>📜 本篇历史</button>
+          </div>
+          <h1>安装与配置</h1>
+          <p>深色顶栏承载全局导航;最左是一条 44px <b>图标栏</b>,高频动作(目录开关、导入、检查更新、设置)一击可达,不用进菜单。侧栏只放文档树,点 ☰ 整体隐藏。</p>
+          <h2>与 A/B 的差异</h2>
+          <p>A 把动作藏进 ⋯ 菜单(最干净但多一击);B 把一切藏起来(最沉浸但学习成本高);C 折中:全局动作在图标栏、<b>文档级</b>动作(切语言、翻译本篇、本篇历史)上移到正文工具条,离内容最近。</p>
+          <p>「翻译全部」「移除来源」等低频动作仍在 ⋯ 菜单里。</p>
+          <div class="pager content-footer">
+            <button>← 上一篇</button>
+            <button>下一篇 →</button>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- 浮动切换条 -->
+    <div class="proto-switcher">
+      <button id="prev-variant" title="上一个变体">←</button>
+      <span class="label" id="variant-label"></span>
+      <button id="next-variant" title="下一个变体">→</button>
+    </div>
+
+    <script>
+      const VARIANTS = { A: "极简顶栏 + 底部翻页", B: "沉浸无顶栏 + 抽屉 + 悬浮翻页", C: "深色顶栏 + 图标栏 + 正文工具条" };
+      const keys = Object.keys(VARIANTS);
+      const params = new URLSearchParams(location.search);
+      let current = params.get("variant") in VARIANTS ? params.get("variant") : "A";
+
+      function render() {
+        document.querySelectorAll("[data-variant]").forEach(el => el.classList.toggle("hidden", el.dataset.variant !== current));
+        document.getElementById("variant-label").innerHTML = `<b>${current}</b> · ${VARIANTS[current]}`;
+        params.set("variant", current);
+        history.replaceState(null, "", `?${params}`);
+      }
+      function cycle(dir) { current = keys[(keys.indexOf(current) + dir + keys.length) % keys.length]; render(); }
+
+      document.getElementById("prev-variant").onclick = () => cycle(-1);
+      document.getElementById("next-variant").onclick = () => cycle(1);
+      document.addEventListener("keydown", e => {
+        if (e.target.matches("input, textarea, select, [contenteditable]")) return;
+        if (e.key === "ArrowLeft") cycle(-1);
+        if (e.key === "ArrowRight") cycle(1);
+      });
+
+      // 变体 A:⋯ 菜单
+      const menuA = document.getElementById("menu-a");
+      const kebabA = document.getElementById("kebab-a");
+      kebabA.onclick = e => { e.stopPropagation(); menuA.classList.toggle("hidden"); };
+      document.addEventListener("click", e => { if (!menuA.contains(e.target)) menuA.classList.add("hidden"); });
+      document.querySelectorAll("#menu-a .menu-item").forEach(item => item.addEventListener("click", () => menuA.classList.add("hidden")));
+
+      // 「翻译全部」状态演示:有待翻译(5 篇)→ 点击后替换为进度行 → 完成后回到禁用态
+      const translateItem = document.getElementById("mi-translate-all");
+      translateItem.innerHTML = '<span class="icon">🌐</span>翻译全部待翻译<span class="count-badge">5 篇</span>';
+      translateItem.addEventListener("click", () => {
+        const row = document.createElement("div");
+        row.className = "menu-progress";
+        row.innerHTML = '<span>🌐</span><div class="bar"><i></i></div><span>2 / 5</span>';
+        translateItem.replaceWith(row);
+        let n = 2;
+        const t = setInterval(() => {
+          n++; if (n > 5) { clearInterval(t); row.replaceWith(translateItemReset()); return; }
+          row.querySelector("i").style.width = (n / 5 * 100) + "%";
+          row.lastElementChild.textContent = `${n} / 5`;
+        }, 900);
+      });
+      function translateItemReset() {
+        const b = document.createElement("button");
+        b.className = "menu-item"; b.disabled = true;
+        b.innerHTML = '<span class="icon">🌐</span>翻译全部待翻译<span class="hint">无待翻译</span>';
+        return b;
+      }
+
+      // 菜单里其余项:mock 提示即可(原型只关心样子)
+      ["mi-import-folder", "mi-import-remote", "mi-remove-source", "mi-check-updates", "mi-history"].forEach(id => {
+        document.getElementById(id)?.addEventListener("click", () => {});
+      });
+
+      // 设置对话框:菜单「设置」打开 + 左侧标签切换
+      document.getElementById("mi-settings").addEventListener("click", () => document.getElementById("settings-a").showModal());
+      document.querySelectorAll("#settings-a .tab-btn").forEach(btn => btn.addEventListener("click", () => {
+        document.querySelectorAll("#settings-a .tab-btn").forEach(b => b.classList.toggle("active", b === btn));
+        document.querySelectorAll("#settings-a .settings-pane").forEach(p => p.classList.toggle("hidden", p.dataset.pane !== btn.dataset.tab));
+      }));
+
+      // 各变体的大纲收起
+      const sa = document.getElementById("sidebar-a");
+      const railToggle = document.getElementById("rail-toggle-a");
+      const toggleA = () => {
+        sa.classList.toggle("collapsed");
+        railToggle.style.background = sa.classList.contains("collapsed") ? "#f0f0f2" : "";
+      };
+      railToggle.onclick = toggleA;
+      document.addEventListener("keydown", e => {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") { e.preventDefault(); toggleA(); }
+      });
+      function toggleB() {
+        document.getElementById("sidebar-b").classList.toggle("collapsed");
+        const open = document.querySelector(".variant-b .sidebar-open-btn");
+        open.style.display = document.getElementById("sidebar-b").classList.contains("collapsed") ? "block" : "none";
+      }
+      function toggleC() { document.getElementById("sidebar-c").classList.toggle("collapsed"); }
+
+      render();
+    </script>
+  </body>
+</html>
