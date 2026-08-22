@@ -596,7 +596,13 @@ function onSearchInput(): void {
 async function performSearch(query: string): Promise<void> {
   showLoading(contentEl);
   try {
-    const hits = await searchDocs(query, { limit: 30 });
+    // Scope search to the currently selected source + language so results
+    // match what the user is looking at.
+    const hits = await searchDocs(query, {
+      limit: 30,
+      sourceId: state.currentSource?.id,
+      lang: state.currentLang,
+    });
     // A later keystroke's search may resolve before this one — drop stale results.
     if (searchInputEl.value.trim() !== query) return;
     const sourceNames = new Map(state.sources.map((s) => [s.id, s.name]));

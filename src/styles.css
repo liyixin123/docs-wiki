@@ -601,6 +601,12 @@ body {
   margin-right: auto;
 }
 
+.doc-pager button:last-child {
+  /* When only "next" exists (first page), pin it to the right edge instead of
+     letting space-between left-align the sole child. */
+  margin-left: auto;
+}
+
 .doc-pager button {
   border: 1px solid var(--border);
   background-color: var(--panel-bg);
