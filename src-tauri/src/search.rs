@@ -21,7 +21,9 @@ use crate::state::AppStateData;
 #[serde(rename_all = "camelCase")]
 pub struct Snippet {
     pub text: String,
-    /// Char-boundary-safe byte offsets into `text` marking matched terms.
+    /// Match offsets as **UTF-16 code unit indices** into `text`, matching
+    /// JavaScript string indexing so the frontend can `text.slice(s, e)`.
+    /// (Rust byte offsets would drift 3x for CJK text.)
     pub highlight_ranges: Vec<(usize, usize)>,
 }
 
@@ -197,7 +199,14 @@ fn build_snippets(body: &str, body_lower: &str, terms: &[String], max_snippets: 
         let suffix = if end < body.len() { "…" } else { "" };
         let offset = prefix.len();
         let text = format!("{prefix}{window}{suffix}");
-        let ranges = ranges.into_iter().map(|(s, e)| (s + offset, e + offset)).collect();
+        let ranges = ranges
+            .into_iter()
+            .map(|(s, e)| (s + offset, e + offset))
+            // Convert byte offsets (valid in Rust slicing) to UTF-16 code unit
+            // offsets so the frontend's `text.slice(start, end)` lands on the
+            // matched term even for multi-byte CJK text.
+            .map(|(s, e)| (byte_to_utf16(&text, s), byte_to_utf16(&text, e)))
+            .collect();
 
         snippets.push(Snippet { text, highlight_ranges: ranges });
         last_end = end;
@@ -206,6 +215,14 @@ fn build_snippets(body: &str, body_lower: &str, terms: &[String], max_snippets: 
         }
     }
     snippets
+}
+
+/// UTF-16 code unit index of a byte position in `s` (JS string indexing).
+fn byte_to_utf16(s: &str, byte_idx: usize) -> usize {
+    s.char_indices()
+        .take_while(|(i, _)| *i < byte_idx)
+        .map(|(_, c)| c.len_utf16())
+        .sum()
 }
 
 fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
@@ -348,6 +365,24 @@ mod tests {
     }
 
     #[test]
+    fn highlight_ranges_are_utf16_offsets_usable_by_js_slice() {
+        // The frontend does `snippet.text.slice(start, end)` in JavaScript,
+        // which indexes UTF-16 code units. Rust-side byte offsets would point
+        // past the match for any multi-byte text (3x shift for CJK).
+        let (tmp, data) = sample_state();
+        let index = InMemorySearch::build(tmp.path(), &data);
+        let hits = index.search("小工具", None, Some("zh"), 10);
+
+        let units: String = hits[0].snippets[0].text.encode_utf16().collect::<Vec<u16>>().iter().map(|&u| char::from_u32(u as u32).unwrap()).collect();
+        for snippet in &hits[0].snippets {
+            for (s, e) in &snippet.highlight_ranges {
+                let marked: String = units.chars().skip(*s).take(*e - *s).collect();
+                assert_eq!(marked, "小工具");
+            }
+        }
+    }
+
+    #[test]
     fn handles_multibyte_utf8_context_and_highlighting() {
         let (tmp, data) = sample_state();
         let index = InMemorySearch::build(tmp.path(), &data);
@@ -356,6 +391,8 @@ mod tests {
         assert_eq!(hits.len(), 1);
         let snippet = &hits[0].snippets[0];
         let (s, e) = snippet.highlight_ranges[0];
-        assert_eq!(&snippet.text[s..e], "小工具");
+        let units: String = snippet.text.encode_utf16().collect::<Vec<u16>>().iter().map(|&u| char::from_u32(u as u32).unwrap()).collect();
+        assert_eq!(units.chars().skip(s).take(e - s).collect::<String>(), "小工具");
     }
 }
+
