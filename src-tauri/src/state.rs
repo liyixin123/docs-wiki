@@ -132,6 +132,16 @@ pub struct LogEntry {
     pub snapshot: Option<SnapshotRef>,
 }
 
+/// The reading position to restore on next launch: what the user had open
+/// when the app last closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastReading {
+    pub source_id: String,
+    pub doc_id: String,
+    pub lang: String,
+}
+
 /// The full persisted app state (serialized as `state.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,6 +152,9 @@ pub struct AppStateData {
     pub docs: Vec<DocMeta>,
     #[serde(default)]
     pub log: Vec<LogEntry>,
+    /// Last doc the user was reading; restored on next startup.
+    #[serde(default)]
+    pub last_reading: Option<LastReading>,
 }
 
 /// Tauri-managed application state: the resolved app data directory plus

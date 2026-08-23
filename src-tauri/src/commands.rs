@@ -16,7 +16,7 @@ use crate::provider::build_provider;
 use crate::remote_import::import_remote_source;
 use crate::search::{InMemorySearch, SearchBackend, SearchHit};
 use crate::snapshot;
-use crate::state::{now_iso, save_state_atomic, AppState, DocMeta, LogEntry, RemoteSpec, SnapshotRef, Source, TranslationStatus};
+use crate::state::{now_iso, save_state_atomic, AppState, DocMeta, LastReading, LogEntry, RemoteSpec, SnapshotRef, Source, TranslationStatus};
 use crate::sources::{read_manifest, remove_source as remove_source_impl};
 use crate::sync::{apply_update as apply_update_impl, check_updates as check_updates_impl, CheckSummary};
 use crate::translate::translate_doc as translate_doc_impl;
@@ -150,9 +150,38 @@ pub async fn add_remote_source(
 }
 
 #[tauri::command]
+pub fn get_last_reading(state: State<AppState>) -> Result<Option<LastReading>, String> {
+    let data = state.data.lock().map_err(|e| e.to_string())?;
+    Ok(data.last_reading.clone())
+}
+
+#[tauri::command]
+pub fn set_last_reading(
+    state: State<AppState>,
+    reading: LastReading,
+) -> Result<(), String> {
+    let mut data = state.data.lock().map_err(|e| e.to_string())?;
+    if data.last_reading.as_ref() == Some(&reading) {
+        return Ok(()); // avoid a state.json rewrite on every doc render
+    }
+    data.last_reading = Some(reading);
+    save_state_atomic(&state.dir, &data).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn remove_source(state: State<AppState>, source_id: String) -> Result<(), String> {
     let mut data = state.data.lock().map_err(|e| e.to_string())?;
     remove_source_impl(&state.dir, &mut data, &source_id).map_err(|e| e.to_string())?;
+    // Drop the saved reading position with the source it points at, so
+    // next startup doesn't try to restore into a missing source.
+    if data
+        .last_reading
+        .as_ref()
+        .is_some_and(|r| r.source_id == source_id)
+    {
+        data.last_reading = None;
+    }
     save_state_atomic(&state.dir, &data).map_err(|e| e.to_string())?;
     Ok(())
 }

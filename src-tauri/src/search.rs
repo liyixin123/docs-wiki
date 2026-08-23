@@ -309,7 +309,7 @@ mod tests {
             updated_at: "t".to_string(),
         };
         let docs = vec![make_doc_meta("alpha", "Alpha Guide"), make_doc_meta("beta", "Beta")];
-        (tmp, AppStateData { sources: vec![source], docs, log: vec![] })
+        (tmp, AppStateData { sources: vec![source], docs, log: vec![], last_reading: None })
     }
 
     #[test]
