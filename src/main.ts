@@ -8,16 +8,19 @@ import {
   checkUpdates,
   getDocContent,
   getHistory,
+  getLastReading,
   getNav,
   listDocs,
   listSources,
   onTranslateProgress,
   removeSource,
   searchDocs,
+  setLastReading,
   setNavOverride,
   translateAllPending,
   translateDoc,
   type DocMeta,
+  type LastReading,
   type NavTree,
   type SearchHit,
   type Source,
@@ -132,6 +135,23 @@ async function bootstrap(): Promise<void> {
   }
 
   populateSourceSelect(state.sources);
+
+  // Restore the last-read position if it still exists; otherwise fall back
+  // to the first source (which itself opens the first doc).
+  let lastReading: LastReading | null = null;
+  try {
+    lastReading = await getLastReading();
+  } catch (err) {
+    console.error("failed to load last reading position:", err);
+  }
+  if (lastReading && state.sources.some((s) => s.id === lastReading!.sourceId)) {
+    await selectSource(lastReading.sourceId, {
+      docId: lastReading.docId,
+      lang: lastReading.lang,
+    });
+    return;
+  }
+
   await selectSource(state.sources[0].id);
 }
 
@@ -276,7 +296,11 @@ async function selectSource(
 
   const firstDocId = state.currentTree.categories.find((c) => c.items.length > 0)
     ?.items[0]?.docId;
-  const targetDocId = jumpTo?.docId ?? firstDocId;
+  // A jump target (restored reading position, cross-source search hit) may
+  // point at a doc that no longer exists — fall back to the first doc.
+  const jumpDocId =
+    jumpTo && orderedDocs().some((d) => d.docId === jumpTo.docId) ? jumpTo.docId : undefined;
+  const targetDocId = jumpDocId ?? firstDocId;
   if (targetDocId) {
     await selectDoc(targetDocId);
   } else {
@@ -422,6 +446,12 @@ async function reloadContent(): Promise<void> {
     if (pendingFragment) {
       scrollToFragment(contentEl, pendingFragment);
     }
+    // The doc rendered successfully — this is the user's reading position.
+    setLastReading({
+      sourceId: source.id,
+      docId,
+      lang: state.currentLang,
+    }).catch((err) => console.error("failed to save reading position:", err));
   } catch (err) {
     showError(contentEl, String(err));
   } finally {

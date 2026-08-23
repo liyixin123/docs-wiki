@@ -265,6 +265,20 @@ export function onTranslateProgress(callback: (progress: TranslateProgress) => v
   return listen<TranslateProgress>("translate-progress", (event) => callback(event.payload));
 }
 
+export interface LastReading {
+  sourceId: string;
+  docId: string;
+  lang: string;
+}
+
+export function getLastReading(): Promise<LastReading | null> {
+  return invoke("get_last_reading");
+}
+
+export function setLastReading(reading: LastReading): Promise<void> {
+  return invoke("set_last_reading", { reading });
+}
+
 /** Bundles state.json + config.json (metadata only, not document content) into one file. */
 export function exportBackup(destPath: string): Promise<void> {
   return invoke("export_backup", { destPath });
