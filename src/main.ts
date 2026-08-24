@@ -1,7 +1,7 @@
 // App entry point: bootstraps sources, wires the source selector, the
 // language toggle, the sidebar nav, the search box, and the content pane
 // together.
-import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import { ask, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import {
   addLocalSource,
   applyUpdate,
@@ -15,6 +15,7 @@ import {
   listSources,
   onTranslateProgress,
   removeSource,
+  enableTranslation,
   searchDocs,
   setLastReading,
   setNavOverride,
@@ -88,6 +89,7 @@ window.addEventListener("DOMContentLoaded", () => {
     onImportFolder: () => void addLocalFolderSource(),
     onImportRemote: () => openRemoteImportDialog(),
     onRemoveSource: () => void removeCurrentSource(),
+    onEnableTranslation: () => openEnableTranslationDialog(),
     onCheckUpdates: () => void runCheckUpdates(),
     onHistory: () => void showHistory(),
     onTranslateAll: () => void runTranslateAllPending(),
@@ -241,11 +243,43 @@ async function refreshSourcesAfterExternalChange(): Promise<void> {
   }
 }
 
+/** Open the 启用翻译 dialog for the current single-language source:
+ * on confirm, upgrade it to bilingual and refresh so translation banners
+ * light up. No-op when the source is already bilingual. */
+function openEnableTranslationDialog(): void {
+  const source = state.currentSource;
+  if (!source || source.languages.length >= 2) return;
+  const dialog = document.querySelector<HTMLDialogElement>("#enable-translation-dialog")!;
+  const form = document.querySelector<HTMLFormElement>("#enable-translation-form")!;
+  const input = document.querySelector<HTMLInputElement>("#enable-translation-lang")!;
+  const cancel = document.querySelector<HTMLButtonElement>("#enable-translation-cancel")!;
+  cancel.onclick = () => dialog.close();
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const targetLang = input.value.trim();
+    if (!targetLang) return;
+    dialog.close();
+    void (async () => {
+      try {
+        await enableTranslation(source.id, targetLang);
+        await refreshSourcesAfterExternalChange();
+      } catch (err) {
+        showError(contentEl, String(err), "启用翻译失败");
+      }
+    })();
+  };
+  dialog.showModal();
+}
+
 async function removeCurrentSource(): Promise<void> {
   const source = state.currentSource;
   if (!source) return;
 
-  const confirmed = window.confirm(`确定要移除来源「${source.name}」吗？本地缓存的文档也会被一并删除。`);
+  // window.confirm is a no-op in Tauri's WKWebView — use the native dialog.
+  const confirmed = await ask(
+    `确定要移除来源「${source.name}」吗？本地缓存的文档也会被一并删除。`,
+    { title: "移除来源", kind: "warning" },
+  );
   if (!confirmed) return;
 
   try {
@@ -283,6 +317,7 @@ async function selectSource(
   renderLangToggle(source);
   appMenu.setSourceName(source.name);
   appMenu.setCheckUpdatesEnabled(!!source.remote || !!source.localPath);
+  appMenu.setEnableTranslationVisible(source.languages.length < 2);
 
   showLoading(contentEl);
   try {
@@ -548,8 +583,11 @@ async function runCheckUpdates(): Promise<void> {
     renderCurrentNav(state.currentDocId);
     updateMenuDataState();
     await reloadContent();
-    window.alert(
+    // window.alert is a no-op in Tauri's WKWebView — surface inline instead.
+    showError(
+      contentEl,
       `检查完成：共检查 ${summary.checked} 篇，${summary.changed.length} 篇有更新，${summary.errored.length} 篇检查失败。`,
+      "检查更新",
     );
   } catch (err) {
     showError(contentEl, String(err));
@@ -567,10 +605,13 @@ async function runTranslateAllPending(): Promise<void> {
     (d) => d.translationStatus === "pending" || d.translationStatus === "neverTranslated",
   ).length;
   if (pendingCount === 0) {
-    window.alert("没有待翻译的文档。");
+    showError(contentEl, "没有待翻译的文档。");
     return;
   }
-  const confirmed = window.confirm(`预计翻译 ${pendingCount} 篇文档，可能需要一些时间并消耗 API 额度，确认继续？`);
+  const confirmed = await ask(
+    `预计翻译 ${pendingCount} 篇文档，可能需要一些时间并消耗 API 额度，确认继续？`,
+    { title: "批量翻译", kind: "info" },
+  );
   if (!confirmed) return;
 
   translateRunning = true;

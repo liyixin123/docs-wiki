@@ -86,6 +86,12 @@ export function removeSource(sourceId: string): Promise<void> {
   return invoke("remove_source", { sourceId });
 }
 
+/** Upgrade a single-language source to bilingual: adds `targetLang` and
+ * marks every doc 待翻译 without touching existing content. */
+export function enableTranslation(sourceId: string, targetLang: string): Promise<void> {
+  return invoke("enable_translation", { sourceId, targetLang });
+}
+
 export function setNavOverride(sourceId: string, orderedIds: string[]): Promise<void> {
   return invoke("set_nav_override", { sourceId, orderedIds });
 }

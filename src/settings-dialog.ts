@@ -3,7 +3,7 @@
 // Owns its own DOM elements; the API key inputs never show a stored key —
 // only a placeholder noting one is configured — since the backend never
 // sends the real key to the frontend in the first place.
-import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { ask, message as messageDialog, open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   exportBackup,
   getConfig,
@@ -188,7 +188,8 @@ export function initSettingsDialog(
 
     try {
       await exportBackup(path);
-      window.alert("备份已导出。");
+      // window.alert is a no-op in Tauri's WKWebView — use the native dialog.
+      await messageDialog("备份已导出。", { title: "备份" });
     } catch (err) {
       errorEl.textContent = String(err);
       errorEl.hidden = false;
@@ -200,8 +201,9 @@ export function initSettingsDialog(
     const path = await openFileDialog({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
     if (!path || Array.isArray(path)) return; // user cancelled
 
-    const confirmed = window.confirm(
+    const confirmed = await ask(
       "导入备份会覆盖当前的来源列表、文档状态和翻译设置（不影响已下载的文档正文），确定要继续吗？",
+      { title: "导入备份", kind: "warning" },
     );
     if (!confirmed) return;
 
@@ -209,7 +211,7 @@ export function initSettingsDialog(
       await importBackup(path);
       dialog.close();
       await onBackupImported();
-      window.alert("备份已导入。");
+      await messageDialog("备份已导入。", { title: "备份" });
     } catch (err) {
       errorEl.textContent = String(err);
       errorEl.hidden = false;
