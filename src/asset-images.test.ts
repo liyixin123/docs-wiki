@@ -50,6 +50,22 @@ describe("resolveAssetImages", () => {
     expect(fetcher).toHaveBeenCalledWith("s", "guides/diagrams/flow.svg");
   });
 
+  it("hides an image whose ../ references escape the source root instead of clamping", async () => {
+    // Same semantics as the backend: a traversal past the root is rejected,
+    // not silently resolved against the root (which could load the wrong
+    // file instead of failing).
+    const el = domWith(`<img src="../../etc/passwd.png" alt="a"><img src="ok.png" alt="b">`);
+    const fetcher = vi.fn().mockResolvedValue("data:image/png;base64,QQ==");
+
+    await resolveAssetImages(el, "s", "doc", fetcher);
+
+    const imgs = [...el.querySelectorAll("img")];
+    expect(imgs[0].style.display).toBe("none");
+    expect(imgs[1].getAttribute("src")).toBe("data:image/png;base64,QQ==");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith("s", "ok.png");
+  });
+
   it("leaves external and non-asset images untouched", async () => {
     const el = domWith(
       `<img src="https://example.com/x.png"><img src="data:image/png;base64,QQ=="><a href="/assets/other.md">link</a>`

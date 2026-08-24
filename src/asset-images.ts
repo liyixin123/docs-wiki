@@ -30,7 +30,14 @@ export async function resolveAssetImages(
     imgs.map(async (img) => {
       const src = img.getAttribute("src")!;
       try {
-        img.src = await fetchAssetUrl(sourceId, resolveAssetPath(docDir, src));
+        const path = resolveAssetPath(docDir, src);
+        if (path === null) {
+          // Traversal past the source root: reject (hide), matching the
+          // backend's refusal, rather than clamping to the root.
+          img.style.display = "none";
+          return;
+        }
+        img.src = await fetchAssetUrl(sourceId, path);
       } catch {
         // Missing or unreadable asset: hide instead of showing a broken icon.
         img.style.display = "none";
@@ -41,14 +48,15 @@ export async function resolveAssetImages(
 
 /** Resolve an img src against the doc's directory into a path relative to
  * the source root: `./` and `../` segments are collapsed, a leading `/`
- * means the source root. */
-function resolveAssetPath(docDir: string, src: string): string {
+ * means the source root. Returns null when `..` would escape the root —
+ * same refusal as the backend's path-traversal guard. */
+function resolveAssetPath(docDir: string, src: string): string | null {
   const base = src.startsWith("/") ? "" : docDir;
   const segments: string[] = [];
   for (const seg of (base + src).split("/")) {
     if (seg === "" || seg === ".") continue;
     if (seg === "..") {
-      segments.pop(); // escaping the root just clamps to it
+      if (segments.pop() === undefined) return null; // escapes the source root
     } else {
       segments.push(seg);
     }
