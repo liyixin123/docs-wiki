@@ -398,6 +398,28 @@ pub fn import_backup(state: State<AppState>, src_path: String) -> Result<(), Str
     Ok(())
 }
 
+/// Write a .docswiki share bundle of the whole library (see backup::export_library).
+#[tauri::command]
+pub fn export_library(state: State<AppState>, dest_path: String) -> Result<(), String> {
+    crate::backup::export_library(&state.dir, &PathBuf::from(dest_path)).map_err(|e| e.to_string())
+}
+
+/// Merge a .docswiki bundle into the local library, then persist state.
+#[tauri::command]
+pub fn import_library(
+    state: State<AppState>,
+    src_path: String,
+) -> Result<crate::backup::LibraryImportSummary, String> {
+    let mut data = state.data.lock().map_err(|e| e.to_string())?;
+    let summary =
+        crate::backup::import_library(&state.dir, &mut data, &PathBuf::from(src_path))
+            .map_err(|e| e.to_string())?;
+    if summary.imported > 0 {
+        save_state_atomic(&state.dir, &data).map_err(|e| e.to_string())?;
+    }
+    Ok(summary)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffPayload {
