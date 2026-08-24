@@ -313,3 +313,20 @@ export function exportBackup(destPath: string): Promise<void> {
 export function importBackup(srcPath: string): Promise<void> {
   return invoke("import_backup", { srcPath });
 }
+
+/** Exports the whole library (all sources' content + translations) as a
+ * shareable .docswiki file. */
+export function exportLibrary(destPath: string): Promise<void> {
+  return invoke("export_library", { destPath });
+}
+
+export interface LibraryImportSummary {
+  imported: number;
+  skipped: number;
+}
+
+/** Merges a .docswiki bundle: new sources land on disk + state, existing
+ * source ids are skipped. */
+export function importLibrary(srcPath: string): Promise<LibraryImportSummary> {
+  return invoke("import_library", { srcPath });
+}

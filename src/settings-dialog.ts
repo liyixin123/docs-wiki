@@ -6,7 +6,9 @@
 import { ask, message as messageDialog, open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   exportBackup,
+  exportLibrary,
   getConfig,
+  importLibrary,
   importBackup,
   saveConfig,
   testProviderConnection,
@@ -53,6 +55,8 @@ export function initSettingsDialog(
   const githubUseGhCli = document.querySelector<HTMLInputElement>("#github-use-gh-cli")!;
   const exportBackupButton = document.querySelector<HTMLButtonElement>("#export-backup-button")!;
   const importBackupButton = document.querySelector<HTMLButtonElement>("#import-backup-button")!;
+  const exportLibraryButton = document.querySelector<HTMLButtonElement>("#export-library-button")!;
+  const importLibraryButton = document.querySelector<HTMLButtonElement>("#import-library-button")!;
 
   cancelButton.addEventListener("click", () => dialog.close());
 
@@ -73,6 +77,8 @@ export function initSettingsDialog(
   openai.testButton.addEventListener("click", () => void runTest("openai", openai));
   exportBackupButton.addEventListener("click", () => void runExportBackup());
   importBackupButton.addEventListener("click", () => void runImportBackup());
+  exportLibraryButton.addEventListener("click", () => void runExportLibrary());
+  importLibraryButton.addEventListener("click", () => void runImportLibrary());
 
   async function openDialog(): Promise<void> {
     errorEl.hidden = true;
@@ -190,6 +196,47 @@ export function initSettingsDialog(
       await exportBackup(path);
       // window.alert is a no-op in Tauri's WKWebView — use the native dialog.
       await messageDialog("备份已导出。", { title: "备份" });
+    } catch (err) {
+      errorEl.textContent = String(err);
+      errorEl.hidden = false;
+    }
+  }
+
+  async function runExportLibrary(): Promise<void> {
+    errorEl.hidden = true;
+    const path = await saveFileDialog({
+      defaultPath: "docswiki-library.docswiki",
+      filters: [{ name: "DocsWiki 文档库", extensions: ["docswiki"] }],
+    });
+    if (!path) return; // user cancelled
+
+    try {
+      await exportLibrary(path);
+      await messageDialog("文档库已导出。", { title: "文档库分享" });
+    } catch (err) {
+      errorEl.textContent = String(err);
+      errorEl.hidden = false;
+    }
+  }
+
+  async function runImportLibrary(): Promise<void> {
+    errorEl.hidden = true;
+    const path = await openFileDialog({
+      multiple: false,
+      filters: [{ name: "DocsWiki 文档库", extensions: ["docswiki"] }],
+    });
+    if (!path || Array.isArray(path)) return; // user cancelled
+
+    try {
+      const summary = await importLibrary(path);
+      dialog.close();
+      await onBackupImported();
+      await messageDialog(
+        summary.imported > 0
+          ? `导入完成：新增 ${summary.imported} 个来源${summary.skipped > 0 ? `，跳过已存在的 ${summary.skipped} 个` : ""}。`
+          : "没有导入任何来源：文档库中的来源都已存在。",
+        { title: "文档库分享" },
+      );
     } catch (err) {
       errorEl.textContent = String(err);
       errorEl.hidden = false;

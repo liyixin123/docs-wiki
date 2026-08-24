@@ -253,6 +253,17 @@
                 <button type="button" id="import-backup-button">导入备份…</button>
               </div>
             </fieldset>
+            <fieldset class="provider-fieldset">
+              <legend>文档库分享</legend>
+              <p class="settings-hint">
+                导出一个 .docswiki 文件，包含全部来源的文档正文、图片和翻译（不含 API 配置和个人历史记录）。
+                其他人安装 DocsWiki 后即可导入，已存在的来源不会被覆盖。
+              </p>
+              <div class="provider-test-row">
+                <button type="button" id="export-library-button">导出文档库…</button>
+                <button type="button" id="import-library-button">导入文档库…</button>
+              </div>
+            </fieldset>
           </div>
 
           <p id="settings-error" class="remote-dialog-error" hidden></p>

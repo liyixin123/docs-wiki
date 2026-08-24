@@ -77,6 +77,8 @@ pub fn run() {
             commands::translate_all_pending,
             commands::export_backup,
             commands::import_backup,
+            commands::export_library,
+            commands::import_library,
             commands::get_diff,
             commands::get_last_reading,
             commands::set_last_reading,
