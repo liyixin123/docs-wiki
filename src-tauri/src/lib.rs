@@ -61,6 +61,7 @@ pub fn run() {
             commands::get_nav,
             commands::get_doc_content,
             commands::get_asset_data,
+            commands::enable_translation,
             commands::search_docs,
             commands::add_local_source,
             commands::add_remote_source,

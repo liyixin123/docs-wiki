@@ -346,7 +346,7 @@ fn make_remote_doc_meta(
 /// Language codes double as directory names on disk (`docs/<lang>/…`), so
 /// anything but a plain code is rejected at this boundary — a `..` or a
 /// separator in here would otherwise escape the source's doc tree.
-fn validate_lang_code(code: &str, what: &str) -> Result<()> {
+pub(crate) fn validate_lang_code(code: &str, what: &str) -> Result<()> {
     if code.is_empty() || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         bail!("{what} '{code}' 不合法：只能包含字母、数字、'-' 和 '_'");
     }

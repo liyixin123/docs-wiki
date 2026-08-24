@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use crate::config::load_config;
 use crate::provider::{build_provider, TranslationProvider};
 use crate::sources::doc_content_path;
-use crate::state::{now_iso, AppStateData, DocMeta, LogEntry, LogKind, TranslationStatus};
+use crate::state::{now_iso, AppStateData, DocMeta, LogEntry, LogKind, Source, SourceKind, TranslationStatus};
 
 /// Extract fenced code blocks (` ``` ` or `~~~`) and replace each with a
 /// `[[CODEBLOCK_n]]` placeholder line, so only prose gets sent to the
@@ -264,11 +264,87 @@ pub async fn translate_doc(dir: &Path, data: &mut AppStateData, source_id: &str,
     .await
 }
 
+/// Upgrade a single-language source to bilingual by adding a translation
+/// target language: every doc flips from NotApplicable to NeverTranslated,
+/// which lights up the translation banners/buttons in the UI. Existing
+/// translations are untouched — this only ever runs on sources that have
+/// none. Errors on unknown sources, invalid lang codes, a target equal to
+/// the primary language, or a source that already has a second language.
+pub fn enable_translation(data: &mut AppStateData, source_id: &str, target_lang: &str) -> Result<()> {
+    crate::remote_import::validate_lang_code(target_lang, "翻译目标语言")?;
+    if !data.sources.iter().any(|s| s.id == source_id) {
+        bail!("未知的来源 '{source_id}'");
+    }
+    let source = data.sources.iter_mut().find(|s| s.id == source_id).unwrap();
+    if source.languages.len() >= 2 {
+        bail!("此来源已启用翻译（目标语言 '{}'），不能重复启用", source.languages[1]);
+    }
+    if source.primary_language == target_lang {
+        bail!("翻译目标语言不能与主语言相同（都是 '{}'）", source.primary_language);
+    }
+    source.languages.push(target_lang.to_string());
+    source.updated_at = now_iso();
+    for doc in data.docs.iter_mut().filter(|d| d.source_id == source_id) {
+        if doc.translation_status == TranslationStatus::NotApplicable {
+            doc.translation_status = TranslationStatus::NeverTranslated;
+        }
+    }
+    data.log.push(LogEntry {
+        id: format!("enable-translation-{source_id}-{target_lang}"),
+        ts: now_iso(),
+        source_id: source_id.to_string(),
+        doc_id: None,
+        kind: LogKind::Import,
+        detail: format!("Enabled translation into {target_lang} for source '{source_id}'"),
+        snapshot: None,
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::local_import::import_local_folder;
     use async_trait::async_trait;
+
+    #[test]
+    fn enable_translation_upgrades_single_language_source() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("intro.md"), "# Intro").unwrap();
+        let mut data = AppStateData::default();
+        let source =
+            import_local_folder(app_dir.path(), &mut data, src.path(), Some("Notes".to_string())).unwrap();
+
+        crate::translate::enable_translation(&mut data, &source.id, "zh").unwrap();
+
+        let upgraded = data.sources.iter().find(|s| s.id == source.id).unwrap();
+        assert_eq!(upgraded.languages, vec!["default".to_string(), "zh".to_string()]);
+        for doc in data.docs.iter().filter(|d| d.source_id == source.id) {
+            assert_eq!(doc.translation_status, TranslationStatus::NeverTranslated);
+        }
+    }
+
+    #[test]
+    fn enable_translation_rejects_bad_and_duplicate_targets() {
+        let mut data = AppStateData::default();
+        data.sources.push(Source {
+            id: "s".to_string(),
+            name: "s".to_string(),
+            kind: SourceKind::LocalFolder,
+            languages: vec!["en".to_string(), "zh".to_string()],
+            primary_language: "en".to_string(),
+            remote: None,
+            local_path: None,
+            order_override: vec![],
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        });
+        assert!(crate::translate::enable_translation(&mut data, "s", "ja").is_err()); // already bilingual
+        assert!(crate::translate::enable_translation(&mut data, "s", "en").is_err()); // == primary
+        assert!(crate::translate::enable_translation(&mut data, "s", "not/a/code").is_err()); // invalid
+        assert!(crate::translate::enable_translation(&mut data, "missing", "zh").is_err()); // unknown
+    }
 
     /// A fake provider that just upper-cases its input — lets us verify the
     /// pipeline (protection/chunking/restoration/self-check) without any

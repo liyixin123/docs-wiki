@@ -55,6 +55,9 @@
               <span class="menu-icon">📜</span>历史记录
             </button>
             <div id="mi-translate-slot">
+              <button class="menu-item" id="mi-enable-translation" type="button" role="menuitem">
+                <span class="menu-icon">💬</span>启用翻译…
+              </button>
               <button class="menu-item" id="mi-translate-all" type="button" role="menuitem">
                 <span class="menu-icon">🌐</span>翻译全部待翻译
                 <span class="menu-hint" id="mi-translate-hint" hidden>无待翻译</span>
@@ -85,6 +88,20 @@
       </div>
     </div>
 
+    <dialog id="enable-translation-dialog" class="remote-dialog">
+      <form id="enable-translation-form" class="remote-form" method="dialog">
+        <h2>启用翻译</h2>
+        <p class="dialog-note">为当前来源添加翻译目标语言。已导入的文档会进入「待翻译」状态。</p>
+        <label>
+          翻译目标语言
+          <input id="enable-translation-lang" type="text" required value="zh" />
+        </label>
+        <div class="remote-form-actions">
+          <button type="button" id="enable-translation-cancel">取消</button>
+          <button type="submit" class="primary">启用</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="remote-source-dialog" class="remote-dialog">
       <form id="remote-source-form" class="remote-form">
         <h2>从 GitHub 导入</h2>

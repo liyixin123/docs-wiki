@@ -8,6 +8,7 @@ export interface AppMenuActions {
   onImportFolder: () => void;
   onImportRemote: () => void;
   onRemoveSource: () => void;
+  onEnableTranslation: () => void;
   onCheckUpdates: () => void;
   onHistory: () => void;
   onTranslateAll: () => void;
@@ -21,6 +22,8 @@ export interface AppMenu {
   setCheckUpdatesEnabled(enabled: boolean): void;
   setCheckUpdatesBusy(busy: boolean): void;
   setUpdateBadge(count: number): void;
+  /** Show/hide "启用翻译…" — only meaningful for single-language sources. */
+  setEnableTranslationVisible(visible: boolean): void;
   /** idle-empty: disabled + "无待翻译"; idle-pending: enabled + "N 篇" badge. */
   setTranslateAll(pendingCount: number): void;
   /** running: replaces the item with an inline progress row "done / total". */
@@ -35,6 +38,7 @@ export function initAppMenu(actions: AppMenuActions): AppMenu {
   const importFolder = document.querySelector<HTMLButtonElement>("#mi-import-folder")!;
   const importRemote = document.querySelector<HTMLButtonElement>("#mi-import-remote")!;
   const removeSource = document.querySelector<HTMLButtonElement>("#mi-remove-source")!;
+  const enableTranslation = document.querySelector<HTMLButtonElement>("#mi-enable-translation")!;
   const checkUpdates = document.querySelector<HTMLButtonElement>("#mi-check-updates")!;
   const checkUpdatesLabel = document.querySelector<HTMLElement>("#mi-check-updates-label")!;
   const updatesBadge = document.querySelector<HTMLElement>("#menu-updates-badge")!;
@@ -60,6 +64,7 @@ export function initAppMenu(actions: AppMenuActions): AppMenu {
     [importFolder, actions.onImportFolder],
     [importRemote, actions.onImportRemote],
     [removeSource, actions.onRemoveSource],
+    [enableTranslation, actions.onEnableTranslation],
     [checkUpdates, actions.onCheckUpdates],
     [history, actions.onHistory],
     [translateAll, actions.onTranslateAll],
@@ -128,6 +133,9 @@ export function initAppMenu(actions: AppMenuActions): AppMenu {
     close,
     setSourceName(name: string | null): void {
       sourceSection.textContent = name ? `来源 · ${name}` : "来源";
+    },
+    setEnableTranslationVisible(visible: boolean): void {
+      enableTranslation.hidden = !visible;
     },
     setImportBusy(busy: boolean): void {
       importFolder.disabled = busy;

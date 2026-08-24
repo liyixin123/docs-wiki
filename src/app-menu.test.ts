@@ -14,7 +14,8 @@ const FIXTURE = `
   <button id="mi-check-updates"><span id="mi-check-updates-label">检查更新</span><span id="menu-updates-badge" hidden></span></button>
   <button id="mi-history">历史记录</button>
   <div id="mi-translate-slot">
-    <button id="mi-translate-all">翻译全部待翻译<span id="mi-translate-hint" hidden>无待翻译</span><span id="menu-translate-badge" hidden></span></button>
+    <button id="mi-enable-translation"></button>
+<button id="mi-translate-all">翻译全部待翻译<span id="mi-translate-hint" hidden>无待翻译</span><span id="menu-translate-badge" hidden></span></button>
   </div>
   <button id="mi-settings">设置</button>
 </div>`;
@@ -24,6 +25,7 @@ function setup() {
     onImportFolder: vi.fn(),
     onImportRemote: vi.fn(),
     onRemoveSource: vi.fn(),
+    onEnableTranslation: vi.fn(),
     onCheckUpdates: vi.fn(),
     onHistory: vi.fn(),
     onTranslateAll: vi.fn(),

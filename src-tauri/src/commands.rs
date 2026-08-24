@@ -19,7 +19,7 @@ use crate::snapshot;
 use crate::state::{now_iso, save_state_atomic, AppState, DocMeta, LastReading, LogEntry, RemoteSpec, SnapshotRef, Source, TranslationStatus};
 use crate::sources::{read_manifest, remove_source as remove_source_impl};
 use crate::sync::{apply_update as apply_update_impl, check_updates as check_updates_impl, CheckSummary};
-use crate::translate::translate_doc as translate_doc_impl;
+use crate::translate::{enable_translation as enable_translation_impl, translate_doc as translate_doc_impl};
 
 #[tauri::command]
 pub fn list_sources(state: State<AppState>) -> Result<Vec<Source>, String> {
@@ -292,6 +292,21 @@ pub async fn test_provider_connection(state: State<'_, AppState>, provider_id: S
     let provider_cfg = cfg.providers.get(&provider_id).ok_or_else(|| format!("未知的 provider '{provider_id}'"))?;
     let provider = build_provider(provider_cfg).map_err(|e| e.to_string())?;
     provider.test_connection().await.map_err(|e| e.to_string())
+}
+
+/// Upgrade a single-language source to bilingual by adding a translation
+/// target language (see translate::enable_translation). Marks every doc
+/// 待翻译 without touching any existing content.
+#[tauri::command]
+pub fn enable_translation(
+    state: State<AppState>,
+    source_id: String,
+    target_lang: String,
+) -> Result<(), String> {
+    let mut data = state.data.lock().map_err(|e| e.to_string())?;
+    enable_translation_impl(&mut data, &source_id, &target_lang).map_err(|e| e.to_string())?;
+    save_state_atomic(&state.dir, &data).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
