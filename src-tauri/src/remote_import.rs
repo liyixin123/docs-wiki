@@ -117,6 +117,7 @@ pub async fn import_remote_source(
     std::fs::create_dir_all(&dest_root)?;
 
     let mut hashes: HashMap<String, String> = HashMap::new();
+    let mut doc_contents: Vec<(String, String)> = Vec::new();
     for id in &md_ids {
         if manifest_doc_id.as_deref() == Some(id.as_str()) {
             continue; // the manifest file itself isn't a browsable doc
@@ -129,7 +130,10 @@ pub async fn import_remote_source(
         }
         std::fs::write(&dest_path, &content).with_context(|| format!("writing {dest_path:?}"))?;
         hashes.insert(id.clone(), sha256_hex(&content));
+        doc_contents.push((id.clone(), content));
     }
+
+    download_referenced_assets(dir, &source_id, &spec, &rel_paths, &doc_contents, &client).await;
 
     let now = now_iso();
     let mentioned: HashSet<&str> = categories.iter().flat_map(|c| c.items.iter().map(|i| i.doc_id.as_str())).collect();
@@ -183,6 +187,121 @@ pub async fn import_remote_source(
     });
 
     Ok(source)
+}
+
+/// Scan every downloaded doc's markdown for image references and download
+/// the in-repo ones (relative to each doc's directory, or `/…` from the
+/// repo root) into `sources/<id>/`, preserving their repo-relative paths.
+/// Only files present in the fetched tree are fetched; each failure is
+/// logged and skipped so one broken image can't fail the whole import.
+async fn download_referenced_assets(
+    dir: &Path,
+    source_id: &str,
+    spec: &RemoteSpec,
+    rel_paths: &[String],
+    doc_contents: &[(String, String)],
+    client: &Client,
+) {
+    let tree: HashSet<String> = rel_paths.iter().cloned().collect();
+    for asset in collect_referenced_assets(doc_contents, &tree) {
+        let url = raw_url_for_rel_path(spec, &asset);
+        match fetch_raw_bytes(client, &url).await {
+            Ok(bytes) => {
+                let dest = dir.join("sources").join(source_id).join(&asset);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(err) = std::fs::write(&dest, &bytes) {
+                    eprintln!("asset write failed for {asset}: {err}");
+                }
+            }
+            Err(err) => eprintln!("asset download failed for {asset}: {err}"),
+        }
+    }
+}
+
+/// Collect the repo-relative paths of every in-repo image referenced by the
+/// given docs' markdown (both `![…](…)` and HTML `<img src="…">`).
+/// External URLs and refs missing from `tree` are dropped; `..` segments
+/// escaping the repo root are rejected outright.
+fn collect_referenced_assets(
+    docs: &[(String, String)],
+    tree: &HashSet<String>,
+) -> std::collections::BTreeSet<String> {
+    let mut assets = std::collections::BTreeSet::new();
+    for (id, content) in docs {
+        let doc_dir = match id.rfind('/') {
+            Some(i) => &id[..i + 1],
+            None => "",
+        };
+        for src in image_refs(content) {
+            if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
+                continue;
+            }
+            if let Some(rel) = resolve_repo_path(doc_dir, &src) {
+                if tree.contains(&rel) {
+                    assets.insert(rel);
+                }
+            }
+        }
+    }
+    assets
+}
+
+/// Extract image srcs from markdown: `![alt](src)` and `<img src="…">`.
+fn image_refs(content: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'!' && bytes[i + 1] == b'[' {
+            // find the matching `](`…`)`
+            if let Some(close) = content[i + 2..].find("](") {
+                let rest = &content[i + 2 + close + 2..];
+                if let Some(end) = rest.find(')') {
+                    let src = &rest[..end];
+                    if !src.is_empty() && !src.contains(' ') {
+                        refs.push(src.to_string());
+                    }
+                    i += 2 + close + 2 + end + 1;
+                    continue;
+                }
+            }
+        }
+        if content[i..].starts_with("<img ") {
+            if let Some(pos) = content[i..].find("src=\"") {
+                let rest = &content[i + pos + 5..];
+                if let Some(end) = rest.find('"') {
+                    refs.push(rest[..end].to_string());
+                }
+            }
+            i += 4;
+            continue;
+        }
+        i += 1;
+    }
+    refs
+}
+
+/// Resolve an image src against the doc's directory into a repo-relative
+/// path (`/…` is repo-root-relative). Returns None when `..` escapes the
+/// repo root.
+fn resolve_repo_path(doc_dir: &str, src: &str) -> Option<String> {
+    let base = if src.starts_with('/') { "" } else { doc_dir };
+    let mut segments: Vec<&str> = Vec::new();
+    let joined = base.to_string() + src;
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                if segments.pop().is_none() {
+                    return None; // escapes the repo root
+                }
+            }
+            s => segments.push(s),
+        }
+    }
+    Some(segments.join("/"))
 }
 
 fn make_remote_doc_meta(
@@ -268,6 +387,16 @@ pub(crate) async fn fetch_raw(client: &Client, url: &str) -> Result<String> {
         bail!("下载失败：{url} 返回 {}", resp.status());
     }
     resp.text().await.with_context(|| format!("读取 {url} 的响应内容失败"))
+}
+
+/// Binary counterpart of `fetch_raw` for assets (images). The bytes go
+/// straight to disk without a UTF-8 round trip.
+pub(crate) async fn fetch_raw_bytes(client: &Client, url: &str) -> Result<Vec<u8>> {
+    let resp = client.get(url).header("User-Agent", USER_AGENT).send().await.with_context(|| format!("请求 {url} 失败"))?;
+    if !resp.status().is_success() {
+        bail!("下载失败：{url} 返回 {}", resp.status());
+    }
+    resp.bytes().await.map(|b| b.to_vec()).with_context(|| format!("读取 {url} 的响应内容失败"))
 }
 
 /// A manifest file directly under `spec.path` (no further nesting),
@@ -363,6 +492,37 @@ mod tests {
 
         let root_spec = RemoteSpec { path: String::new(), ..spec };
         assert_eq!(raw_url_for_rel_path(&root_spec, "intro.md"), "https://raw.githubusercontent.com/acme/docs/main/intro.md");
+    }
+
+    #[test]
+    fn collects_referenced_assets_from_doc_contents() {
+        let docs = vec![
+            ("intro".to_string(), "![a](images/arch.png)".to_string()),
+            ("guides/getting-started".to_string(),
+                "![b](./assets/x.jpg)\n![c](../diagrams/flow.svg)\n![d](https://example.com/ext.png)\n![e](/assets/root.png)\n![f](missing.png)".to_string()),
+        ];
+        let tree: HashSet<String> = [
+            "images/arch.png", "guides/assets/x.jpg", "diagrams/flow.svg",
+            "assets/root.png", "unrelated.png",
+        ].iter().map(|s| s.to_string()).collect();
+
+        let assets = collect_referenced_assets(&docs, &tree);
+
+        assert_eq!(assets, [
+            "images/arch.png", "guides/assets/x.jpg", "diagrams/flow.svg", "assets/root.png",
+        ].iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<_>>());
+    }
+
+    #[test]
+    fn collect_rejects_traversal_refs_and_still_returns_the_rest() {
+        let docs = vec![
+            ("doc".to_string(), "![a](../../etc/passwd.png)\n![b](ok.png)".to_string()),
+        ];
+        let tree: HashSet<String> = ["ok.png"].iter().map(|s| s.to_string()).collect();
+
+        let assets = collect_referenced_assets(&docs, &tree);
+
+        assert_eq!(assets, ["ok.png"].iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<_>>());
     }
 
     #[tokio::test]
