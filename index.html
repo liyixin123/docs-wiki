@@ -211,6 +211,17 @@
                 <input id="chunk-threshold" type="number" min="1000" step="1000" value="12000" />
               </label>
             </fieldset>
+            <fieldset class="provider-fieldset">
+              <legend>GitHub 访问</legend>
+              <label>
+                访问令牌（可选，支持 $ENV_VAR / !command 表达式）
+                <input id="github-token" type="password" autocomplete="off" />
+              </label>
+              <label class="checkbox-label">
+                <input id="github-use-gh-cli" type="checkbox" checked />
+                未填令牌时尝试使用本机 gh 登录凭证
+              </label>
+            </fieldset>
           </div>
 
           <div class="settings-pane" data-pane="backup" hidden>

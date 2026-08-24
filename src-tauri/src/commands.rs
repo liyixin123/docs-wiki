@@ -229,7 +229,7 @@ pub async fn check_updates(state: State<'_, AppState>, source_id: String) -> Res
     // comment): the check does network/disk I/O across many docs, which
     // can't happen while holding a std::sync::MutexGuard across .await.
     let mut data_snapshot = { state.data.lock().map_err(|e| e.to_string())?.clone() };
-    let summary = check_updates_impl(&mut data_snapshot, &source_id).await.map_err(|e| e.to_string())?;
+    let summary = check_updates_impl(&state.dir, &mut data_snapshot, &source_id).await.map_err(|e| e.to_string())?;
 
     {
         let mut data = state.data.lock().map_err(|e| e.to_string())?;

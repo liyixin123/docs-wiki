@@ -49,6 +49,8 @@ export function initSettingsDialog(
   const checkOnStartup = document.querySelector<HTMLInputElement>("#check-on-startup")!;
   const concurrency = document.querySelector<HTMLInputElement>("#translation-concurrency")!;
   const chunkThreshold = document.querySelector<HTMLInputElement>("#chunk-threshold")!;
+  const githubToken = document.querySelector<HTMLInputElement>("#github-token")!;
+  const githubUseGhCli = document.querySelector<HTMLInputElement>("#github-use-gh-cli")!;
   const exportBackupButton = document.querySelector<HTMLButtonElement>("#export-backup-button")!;
   const importBackupButton = document.querySelector<HTMLButtonElement>("#import-backup-button")!;
 
@@ -106,6 +108,9 @@ export function initSettingsDialog(
     checkOnStartup.checked = cfg.translation.checkOnStartup;
     concurrency.value = String(cfg.translation.concurrency);
     chunkThreshold.value = String(cfg.translation.chunkThresholdChars);
+    githubToken.value = "";
+    githubToken.placeholder = cfg.github.hasToken ? "已配置（留空则不修改）" : "例如 $GITHUB_TOKEN";
+    githubUseGhCli.checked = cfg.github.useGhCli;
   }
 
   function buildInput(): ConfigInput {
@@ -132,6 +137,10 @@ export function initSettingsDialog(
         checkOnStartup: checkOnStartup.checked,
         concurrency: Number(concurrency.value) || 2,
         chunkThresholdChars: Number(chunkThreshold.value) || 12_000,
+      },
+      github: {
+        token: githubToken.value.trim() || undefined,
+        useGhCli: githubUseGhCli.checked,
       },
     };
   }

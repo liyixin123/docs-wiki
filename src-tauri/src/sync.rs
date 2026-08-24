@@ -30,12 +30,13 @@ pub struct CheckSummary {
 /// Re-check every doc in `source_id` against its upstream copy, updating
 /// each `DocMeta.lastCheckStatus`/`lastCheckedAt` and logging a summary.
 /// Does not persist `data` — the caller saves once the lock is released.
-pub async fn check_updates(data: &mut AppStateData, source_id: &str) -> Result<CheckSummary> {
+pub async fn check_updates(dir: &Path, data: &mut AppStateData, source_id: &str) -> Result<CheckSummary> {
     let source = find_source(data, source_id)?;
     let doc_ids: Vec<String> =
         data.docs.iter().filter(|d| d.source_id == source_id).map(|d| d.id.clone()).collect();
 
-    let client = Client::new();
+    let cfg = crate::config::load_config(dir).unwrap_or_default();
+    let client = crate::remote_import::github_client(crate::config::github_token_for(&cfg).as_deref());
     let now = now_iso();
     let mut checked = 0usize;
     let mut changed = Vec::new();
@@ -87,7 +88,8 @@ pub async fn check_updates(data: &mut AppStateData, source_id: &str) -> Result<C
 /// persist `data` — the caller saves once the lock is released.
 pub async fn apply_update(dir: &Path, data: &mut AppStateData, source_id: &str, doc_id: &str) -> Result<DocMeta> {
     let source = find_source(data, source_id)?;
-    let client = Client::new();
+    let cfg = crate::config::load_config(dir).unwrap_or_default();
+    let client = crate::remote_import::github_client(crate::config::github_token_for(&cfg).as_deref());
     let content = fetch_upstream_content(&client, &source, doc_id)
         .await
         .with_context(|| format!("拉取 '{doc_id}' 的最新内容失败"))?;
@@ -188,7 +190,7 @@ pub async fn run_startup_checks(dir: &Path, data: &mut AppStateData) {
         .collect();
 
     for source_id in checkable_ids {
-        if let Err(e) = check_updates(data, &source_id).await {
+        if let Err(e) = check_updates(dir, data, &source_id).await {
             eprintln!("startup check: failed for source '{source_id}': {e}");
         }
     }
@@ -217,7 +219,7 @@ mod tests {
             import_local_folder(app_dir.path(), &mut data, upstream.path(), Some("Notes".to_string())).unwrap();
 
         // Nothing has changed yet.
-        let summary = check_updates(&mut data, &source.id).await.unwrap();
+        let summary = check_updates(app_dir.path(), &mut data, &source.id).await.unwrap();
         assert_eq!(summary.checked, 1);
         assert!(summary.changed.is_empty());
         let doc = data.docs.iter().find(|d| d.id == "intro").unwrap();
@@ -225,7 +227,7 @@ mod tests {
 
         // Now mutate the "upstream" folder directly, bypassing our copy.
         write(&upstream.path().join("intro.md"), "# Intro\n\nUpdated content!");
-        let summary = check_updates(&mut data, &source.id).await.unwrap();
+        let summary = check_updates(app_dir.path(), &mut data, &source.id).await.unwrap();
         assert_eq!(summary.changed, vec!["intro".to_string()]);
         let doc = data.docs.iter().find(|d| d.id == "intro").unwrap();
         assert_eq!(doc.last_check_status, CheckStatus::Changed);
@@ -255,7 +257,7 @@ mod tests {
 
         // The bundled Pi source carries a real RemoteSpec pointing at the
         // upstream repo, so this genuinely hits the network.
-        let summary = check_updates(&mut data, "pi").await.unwrap();
+        let summary = check_updates(app_dir.path(), &mut data, "pi").await.unwrap();
         assert_eq!(summary.checked, 29);
         assert!(summary.errored.is_empty());
     }

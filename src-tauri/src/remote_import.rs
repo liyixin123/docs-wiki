@@ -83,7 +83,8 @@ pub async fn import_remote_source(
         TranslationStatus::NotApplicable
     };
 
-    let client = Client::new();
+    let cfg = crate::config::load_config(dir).unwrap_or_default();
+    let client = github_client(crate::config::github_token_for(&cfg).as_deref());
     let all_paths = fetch_tree_paths(&client, &spec).await?;
 
     let prefix = normalized_prefix(&spec.path);
@@ -248,37 +249,50 @@ fn collect_referenced_assets(
     assets
 }
 
+/// Build the reqwest client used for all GitHub traffic (API + raw). When
+/// a token is available it rides along as a default Authorization header on
+/// every request, lifting the anonymous 60/h rate limit to 5000/h.
+pub(crate) fn github_client(token: Option<&str>) -> Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(t) = token {
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {t}")) {
+            headers.insert(reqwest::header::AUTHORIZATION, v);
+        }
+    }
+    Client::builder().default_headers(headers).build().unwrap_or_default()
+}
+
 /// Extract image srcs from markdown: `![alt](src)` and `<img src="…">`.
+/// Scans only at char boundaries (a byte-wise walk would slice mid-char on
+/// multibyte text and panic).
 fn image_refs(content: &str) -> Vec<String> {
     let mut refs = Vec::new();
-    let bytes = content.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'!' && bytes[i + 1] == b'[' {
-            // find the matching `](`…`)`
-            if let Some(close) = content[i + 2..].find("](") {
-                let rest = &content[i + 2 + close + 2..];
-                if let Some(end) = rest.find(')') {
-                    let src = &rest[..end];
-                    if !src.is_empty() && !src.contains(' ') {
-                        refs.push(src.to_string());
-                    }
-                    i += 2 + close + 2 + end + 1;
-                    continue;
+    let mut from = 0;
+    while let Some(rel) = content[from..].find("![") {
+        let bang = from + rel;
+        if let Some(close) = content[bang + 2..].find("](") {
+            let open = bang + 2 + close + 2;
+            if let Some(endrel) = content[open..].find(')') {
+                let src = &content[open..open + endrel];
+                if !src.is_empty() && !src.contains(' ') {
+                    refs.push(src.to_string());
                 }
+                from = open + endrel + 1;
+                continue;
             }
         }
-        if content[i..].starts_with("<img ") {
-            if let Some(pos) = content[i..].find("src=\"") {
-                let rest = &content[i + pos + 5..];
-                if let Some(end) = rest.find('"') {
-                    refs.push(rest[..end].to_string());
-                }
+        from = bang + 2;
+    }
+    let mut from = 0;
+    while let Some(rel) = content[from..].find("<img ") {
+        let tag = from + rel;
+        if let Some(srel) = content[tag..].find("src=\"") {
+            let open = tag + srel + 5;
+            if let Some(endrel) = content[open..].find('"') {
+                refs.push(content[open..open + endrel].to_string());
             }
-            i += 4;
-            continue;
         }
-        i += 1;
+        from = tag + 5;
     }
     refs
 }
@@ -511,6 +525,14 @@ mod tests {
         assert_eq!(assets, [
             "images/arch.png", "guides/assets/x.jpg", "diagrams/flow.svg", "assets/root.png",
         ].iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<_>>());
+    }
+
+    #[test]
+    fn image_refs_survives_multibyte_characters() {
+        // Byte-wise scanning used to panic slicing mid-char (e.g. ⇐ arrows
+        // in real Pi docs), which the anonymous rate limit had been hiding.
+        let content = "映射 ⇐⇒ 说明\n![ok](images/a.png)\n结束 ⇒。";
+        assert_eq!(image_refs(content), vec!["images/a.png".to_string()]);
     }
 
     #[test]

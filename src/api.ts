@@ -188,10 +188,16 @@ export interface TranslationSettings {
   chunkThresholdChars: number;
 }
 
+export interface PublicGithubConfig {
+  hasToken: boolean;
+  useGhCli: boolean;
+}
+
 export interface PublicConfig {
   activeProvider: string | null;
   providers: Record<string, PublicProviderConfig>;
   translation: TranslationSettings;
+  github: PublicGithubConfig;
 }
 
 export function getConfig(): Promise<PublicConfig> {
@@ -207,10 +213,17 @@ export interface ProviderInput {
   maxOutputTokens: number;
 }
 
+export interface GithubInput {
+  /** `undefined` (or blank) leaves the existing stored token untouched. */
+  token?: string;
+  useGhCli: boolean;
+}
+
 export interface ConfigInput {
   activeProvider: string | null;
   providers: Record<string, ProviderInput>;
   translation: TranslationSettings;
+  github: GithubInput;
 }
 
 export function saveConfig(input: ConfigInput): Promise<void> {
