@@ -56,6 +56,12 @@ export function getDocContent(
   return invoke("get_doc_content", { sourceId, id, lang });
 }
 
+/** Fetch a static asset (e.g. a `/assets/pic.png` image reference in a doc)
+ * as a data URL. Path is the URL path without the leading slash. */
+export function getAssetDataUrl(sourceId: string, path: string): Promise<string> {
+  return invoke("get_asset_data", { sourceId, path });
+}
+
 export function addLocalSource(path: string, name?: string): Promise<Source> {
   return invoke("add_local_source", { path, name });
 }

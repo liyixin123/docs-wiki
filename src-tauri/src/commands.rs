@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::config::{apply_config_input, load_config, save_config_atomic, ConfigInput, PublicConfig};
 use crate::diff::compute_diff;
-use crate::docs::read_doc_content;
+use crate::docs::{read_asset, read_doc_content};
 use crate::local_import::import_local_folder;
 use crate::nav::{apply_order_override, NavTree};
 use crate::provider::build_provider;
@@ -52,6 +52,25 @@ pub fn get_nav(state: State<AppState>, source_id: String) -> Result<NavTree, Str
     let mut tree = read_manifest(&state.dir, &source_id).map_err(|e| e.to_string())?;
     apply_order_override(&mut tree.categories, &order_override);
     Ok(tree)
+}
+
+/// Fetch a static asset (e.g. a `/assets/pic.png` image reference in a
+/// doc) as a data URL the webview can render directly. Keeps the asset
+/// protocol/capability config untouched — everything goes through the
+/// command surface like the rest of the app.
+#[tauri::command]
+pub fn get_asset_data(
+    state: State<AppState>,
+    source_id: String,
+    path: String,
+) -> Result<String, String> {
+    use base64::Engine as _;
+    let (mime, bytes) = read_asset(&state.dir, &source_id, &path).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "data:{};base64,{}",
+        mime,
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 #[tauri::command]

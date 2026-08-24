@@ -106,6 +106,8 @@ pub fn import_local_folder(
         docs_by_lang.insert(lang.clone(), present);
     }
 
+    copy_static_assets(dir, &source_id, folder, &languages);
+
     let now = now_iso();
     let primary_present = docs_by_lang.get(&primary).cloned().unwrap_or_default();
     let mentioned: HashSet<&str> = categories
@@ -329,6 +331,47 @@ fn find_manifest_file(root: &Path) -> Option<PathBuf> {
 /// A folder is bilingual/multilingual when at least two of its top-level
 /// subdirectories match a known language code and actually contain markdown
 /// files; otherwise everything is imported under a single `"default"` bucket.
+/// Copy top-level entries that are neither language folders nor markdown
+/// docs (e.g. an `assets/` image directory) into `sources/<id>/`, so images
+/// referenced as `/assets/...` in the markdown remain available after the
+/// original folder is moved or deleted.
+fn copy_static_assets(
+    dir: &Path,
+    source_id: &str,
+    folder: &Path,
+    languages: &[String],
+) {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if languages.iter().any(|l| l == &name)
+            || name.starts_with('.')
+            || entry.path().extension().is_some_and(|e| e.eq_ignore_ascii_case("md"))
+        {
+            continue;
+        }
+        let dest = dir.join("sources").join(source_id).join(&name);
+        let _ = copy_dir_recursive(&entry.path(), &dest);
+    }
+}
+
+fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        std::fs::create_dir_all(dest)?;
+        for entry in std::fs::read_dir(src)?.flatten() {
+            copy_dir_recursive(&entry.path(), &dest.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src, dest).map(|_| ())
+    }
+}
+
 fn detect_languages(folder: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return vec![SINGLE_LANG.to_string()];
@@ -488,6 +531,32 @@ mod tests {
         assert_eq!(intro.title, "简介");
         assert_eq!(intro.category, "分类一");
         assert_eq!(intro.translation_status, TranslationStatus::NotApplicable);
+    }
+
+    #[test]
+    fn copies_top_level_asset_dirs_alongside_docs() {
+        let app_dir = tempfile::tempdir().unwrap();
+        let src = tempfile::tempdir().unwrap();
+
+        write(&src.path().join("en/intro.md"), "# Intro\n\n![img](/assets/pic.png)");
+        write(&src.path().join("zh/intro.md"), "# 简介\n\n![图](/assets/pic.png)");
+        write(&src.path().join("assets/pic.png"), "fake png bytes");
+        write(&src.path().join("assets/nested/deep.jpg"), "fake jpg bytes");
+
+        let mut data = AppStateData::default();
+        let source =
+            import_local_folder(app_dir.path(), &mut data, src.path(), Some("带图文档".to_string()))
+                .unwrap();
+
+        let base = app_dir.path().join("sources").join(&source.id);
+        assert_eq!(
+            fs::read_to_string(base.join("assets/pic.png")).unwrap(),
+            "fake png bytes"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("assets/nested/deep.jpg")).unwrap(),
+            "fake jpg bytes"
+        );
     }
 
     #[test]
