@@ -7,6 +7,7 @@ import {
   applyUpdate,
   checkUpdates,
   getDocContent,
+  getAssetDataUrl,
   getHistory,
   getLastReading,
   getNav,
@@ -38,6 +39,7 @@ import { initRemoteSourceDialog } from "./remote-source-dialog";
 import { renderSearchResults } from "./search-view";
 import { initSettingsDialog } from "./settings-dialog";
 import { showDoc, showError, showLoading, showPlaceholder, type DocBanner } from "./content-view";
+import { resolveAssetImages } from "./asset-images";
 
 interface AppState {
   sources: Source[];
@@ -441,6 +443,7 @@ async function reloadContent(): Promise<void> {
   try {
     const markdown = await getDocContent(source.id, docId, state.currentLang);
     showDoc(contentEl, markdown, buildDocBanners(source.id, docId));
+    void resolveAssetImages(contentEl, source.id, docId, getAssetDataUrl);
     const { prev, next } = prevNextDocs();
     appendPager(contentEl, prev, next, (docId) => void selectDoc(docId));
     if (pendingFragment) {

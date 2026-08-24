@@ -993,6 +993,13 @@ body {
   margin: 0 auto;
 }
 
+/* Docs-site screenshots are high-res and would render at natural size,
+ * blowing past the column. Clamp to the reading width and keep the ratio. */
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+}
+
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3 {
